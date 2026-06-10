@@ -8,11 +8,11 @@ Accepted
 
 Hypertea treats effects and subscriptions as managed runtime concepts.
 
-Actions can return state directly or return `[state, ...effects]`. Each effect is either an effect function or an `[effect, payload]` tuple. The runtime runs effects after applying the state change and passes them `dispatch`.
+`update` returns `[model, effects]`. Each effect is a page-local value interpreted by the runtime's `runEffect` function. The runtime runs effects after applying the state change and passes `runEffect` a typed message dispatcher.
 
-Subscriptions are declared from state as `[subscriber, payload]` tuples. The runtime starts, preserves, restarts, and stops subscriptions as state changes. Payload changes restart a subscription unless the changed payload value is a function or an action tuple, matching Hyperapp's callback-preservation behavior.
+Subscriptions are declared from model state as `ProgramSubscription<Msg>` values. The runtime starts, preserves, restarts, and stops subscriptions as state changes.
 
-Ordinary application code can request effects from actions, but it should not execute unmanaged browser or network side effects directly. Subscriptions use the same boundary: a subscription can listen to a browser or external event, but the behavior is declared through Hypertea and dispatches typed state transitions.
+Ordinary application code can request effects from `update`, but it should not execute unmanaged browser or network side effects directly. Subscriptions use the same boundary: a subscription can listen to a browser or external event, but the behavior is declared through Hypertea and dispatches typed messages.
 
 ## Effect Boundary
 

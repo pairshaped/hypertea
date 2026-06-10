@@ -12,12 +12,15 @@ The Curling Rust app can consume it through a local package link while the API i
 
 ## Package Shape
 
-The package exports compiled JavaScript and declarations from `dist/`.
+The package exports compiled JavaScript and declarations from `dist/`. The
+declarations include Hypertea's global JSX namespace so consuming TSX islands do
+not need local `jsx.d.ts` files.
 
 Source code lives in `src/`. Tests may live next to source files when that improves locality, or in `test/` for public API and integration-style checks.
 
 ## Curling Integration
 
-The Curling app should depend on Hypertea through normal package tooling. It should not copy runtime source files into the app.
+The Curling app should depend on Hypertea through normal package tooling. It
+should not copy runtime source files or JSX declarations into the app.
 
 While the package is private, local development can use a `file:` dependency or package link. Publishing can be considered later if more projects need it.
