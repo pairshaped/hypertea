@@ -6,18 +6,23 @@ Accepted
 
 ## Decision
 
-Hypertea is a project-owned TypeScript runtime for small client islands using The Elm Architecture.
+Hypertea is a project-owned TypeScript runtime for small client islands using The Elm Architecture with a Hyperapp-shaped API.
 
 The runtime centers on:
 
-- `Model`: immutable island state
-- `Msg`: discriminated-union messages
-- `init`: initial state plus optional startup effect
-- `update`: pure state transition plus optional effect
-- `view`: typed view output
-- `mount`: island bootstrapping from server-provided flags
+- `State`: immutable island state
+- `Action`: a state transition function
+- `Dispatchable`: state, action, action payload tuple, or state plus effects tuple
+- `Effect`: a managed effect function or `[effect, payload]` tuple
+- `Subscription`: a managed subscriber plus payload tuple
+- `app`: island bootstrapping, dispatch, subscription patching, and DOM patching
+- `h`, `typedH`, `text`, and `memo`: virtual DOM construction
 
 The public API should make the normal path safe and boring. Application code should not import browser APIs directly to perform effects.
+
+The runtime owns the DOM mechanics. It may use browser APIs internally to create nodes, attach event listeners, patch keyed children, and reconcile server-rendered nodes.
+
+Apps can use `typedH<State>()` to create a state-aware `h` helper and avoid repeating the state generic in every view call.
 
 ## Design Constraints
 
@@ -30,7 +35,7 @@ The public API should make the normal path safe and boring. Application code sho
 ## Acceptance Criteria
 
 - Application updates are pure.
-- Effects are represented as typed values or approved managed functions.
+- Effects are represented as typed managed functions or effect tuples.
 - Exhaustive message handling is easy to enforce.
 - Island bootstrapping accepts server-rendered flags.
 - The package stays useful without a build-time framework plugin.
