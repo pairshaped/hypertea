@@ -22,6 +22,15 @@ type PatchableElement = Element & {
 };
 type PropsRecord = Readonly<Record<string, unknown>>;
 type MountedVNode<State> = VNode<State> & { node: Node };
+type ProgramEffecter<Model, ProgramEffect> = Effecter<Model, ProgramEffect>;
+type ProgramEffectTuple<Model, ProgramEffect> = readonly [
+  effecter: ProgramEffecter<Model, ProgramEffect>,
+  payload: ProgramEffect,
+];
+type ProgramSubscriptionTuple<Model, Msg> = readonly [
+  subscriber: Subscriber<Model, ProgramSubscription<Msg>>,
+  payload: ProgramSubscription<Msg>,
+];
 
 export type ClassProp =
   | boolean
@@ -89,22 +98,38 @@ export type MaybeSubscription<State, Payload = unknown> =
 
 export type Unsubscribe = () => void;
 
-export type Props<State> = PropsRecord & {
+export type Props = PropsRecord & {
   readonly class?: ClassProp;
   readonly key?: Key | null | undefined;
   readonly style?: StyleProp;
-  readonly [property: `on${string}`]: Dispatchable<State> | undefined;
+  readonly [property: `on${string}`]: unknown;
 };
+
+/* eslint-disable @typescript-eslint/no-namespace, @typescript-eslint/consistent-type-definitions, @typescript-eslint/consistent-indexed-object-style */
+declare global {
+  namespace JSX {
+    type Element = VNode;
+
+    interface ElementChildrenAttribute {
+      children: unknown;
+    }
+
+    interface IntrinsicElements {
+      [elementName: string]: Props;
+    }
+  }
+}
+/* eslint-enable @typescript-eslint/no-namespace, @typescript-eslint/consistent-type-definitions, @typescript-eslint/consistent-indexed-object-style */
 
 export type TypedH<State> = (
   tag: string,
-  props: Props<State>,
-  children?: MaybeVNode<State> | ReadonlyArray<MaybeVNode<State>>,
+  props?: Props,
+  ...children: Array<Child<State>>
 ) => ElementVNode<State>;
 
 export type ElementVNode<State> = {
   readonly tag: string | MemoView<State>;
-  readonly props: Props<State>;
+  readonly props: Props;
   readonly key: Key | null | undefined;
   readonly children: Array<MaybeVNode<State>>;
   readonly type: 1;
@@ -114,7 +139,7 @@ export type ElementVNode<State> = {
 
 export type TextVNode = {
   readonly tag: string;
-  readonly props: Props<never>;
+  readonly props: Props;
   readonly key: undefined;
   readonly children: Array<never>;
   readonly type: 3;
@@ -122,8 +147,13 @@ export type TextVNode = {
   memo?: Indexable;
 };
 
-export type VNode<State> = ElementVNode<State> | TextVNode;
-export type MaybeVNode<State> = VNode<State> | boolean | null | undefined;
+export type VNode<State = unknown> = ElementVNode<State> | TextVNode;
+export type MaybeVNode<State = unknown> = VNode<State> | boolean | null | undefined;
+export type Child<State = unknown> =
+  | MaybeVNode<State>
+  | string
+  | number
+  | ReadonlyArray<Child<State>>;
 
 export type App<State> = Readonly<{
   init?: Dispatchable<State>;
@@ -133,11 +163,60 @@ export type App<State> = Readonly<{
   dispatch?: (dispatch: Dispatch<State>) => Dispatch<State>;
 }>;
 
+export type EventBinding<Msg> = Readonly<{
+  kind: "eventBinding";
+  preventDefault: boolean;
+  toMsg: (event: Event) => Msg;
+}>;
+
+export type Viewport = Readonly<{
+  width: number;
+  height: number;
+}>;
+
+export type Transition<Model, ProgramEffect> = readonly [
+  model: Model,
+  effects: ReadonlyArray<ProgramEffect>,
+];
+
+export type ProgramSubscriber<Msg> = (
+  dispatch: (message: Msg) => void,
+) => Unsubscribe;
+
+export type ProgramSubscription<Msg> = Readonly<{
+  key: string;
+  subscribe: ProgramSubscriber<Msg>;
+}>;
+
+export type Runtime<Model, Msg, ProgramEffect> = Readonly<{
+  init: () => Transition<Model, ProgramEffect>;
+  update: (model: Model, message: Msg) => Transition<Model, ProgramEffect>;
+  view: (model: Model) => VNode<Model>;
+  runEffect: (
+    dispatch: (message: Msg) => void,
+    effect: ProgramEffect,
+  ) => void | Promise<void>;
+  subscriptions?: (model: Model) => ReadonlyArray<ProgramSubscription<Msg>>;
+  node: Element;
+}>;
+
 type RunningSubscription<State> = readonly [
   subscriber: Subscriber<State>,
   payload: unknown,
   unsubscribe: Unsubscribe,
 ];
+
+const eventNames: Readonly<Record<string, string>> = {
+  onChange: "onchange",
+  onClick: "onclick",
+  onDragEnd: "ondragend",
+  onDragEnter: "ondragenter",
+  onDragStart: "ondragstart",
+  onInput: "oninput",
+  onSubmit: "onsubmit",
+};
+
+let currentDispatch: ((message: unknown) => unknown) | undefined;
 
 export function assertNever(value: never): never {
   throw new Error(`Unhandled message: ${JSON.stringify(value)}`);
@@ -151,18 +230,20 @@ export function text(value: unknown, node?: Node): TextVNode {
   return createVNode(String(value), emptyObject, emptyArray, textNodeType, node);
 }
 
-export function h<State>(
+export function h<State = unknown>(
   tag: string,
-  props: Props<State>,
-  children: MaybeVNode<State> | ReadonlyArray<MaybeVNode<State>> = emptyArray,
+  props?: Props,
+  ...children: Array<Child<State>>
 ): ElementVNode<State> {
-  const { class: classValue } = props;
-  const key = props.key;
+  const { class: classValue } = props ?? emptyObject;
+  const key = props?.key;
   const nextProps: Record<string, unknown> = {};
 
-  for (const name in props) {
+  for (const name in props ?? emptyObject) {
     if (name !== "key" && name !== "class") {
-      nextProps[name] = props[name];
+      nextProps[eventNames[name] ?? name] = normalizePropValue(
+        props?.[name],
+      );
     }
   }
 
@@ -174,12 +255,19 @@ export function h<State>(
 
   return createVNode(
     tag,
-    nextProps as Props<State>,
-    isArrayOfChildren(children) ? [...children] : [children],
+    nextProps as Props,
+    flattenChildren(children),
     elementNodeType,
     undefined,
     key,
   );
+}
+
+export function fragment<State>(
+  _props: Props | undefined,
+  ...children: Array<Child<State>>
+): Array<VNode<State>> {
+  return flattenChildren(children);
 }
 
 export function typedH<State>(): TypedH<State> {
@@ -199,6 +287,166 @@ export function memo<State, Data extends Indexable>(
     node: undefined,
     memo: data,
   };
+}
+
+export function changed<Msg>(message: Msg): EventBinding<Msg> {
+  return eventBinding(() => message);
+}
+
+export function clicked<Msg>(message: Msg): EventBinding<Msg> {
+  return eventBinding(() => message);
+}
+
+export function dragEnded<Msg>(message: Msg): EventBinding<Msg> {
+  return eventBinding(() => message);
+}
+
+export function dragEntered<Msg>(message: Msg): EventBinding<Msg> {
+  return eventBinding(() => message);
+}
+
+export function dragStarted<Msg>(message: Msg): EventBinding<Msg> {
+  return eventBinding(() => message);
+}
+
+export function inputChanged<Msg>(
+  toMessage: (value: string) => Msg,
+): EventBinding<Msg> {
+  return eventBinding((event) => toMessage(inputValue(event)));
+}
+
+export function checkedChanged<Msg>(
+  toMessage: (value: boolean) => Msg,
+): EventBinding<Msg> {
+  return eventBinding((event) => toMessage(inputChecked(event)));
+}
+
+export function submitted<Msg>(message: Msg): EventBinding<Msg> {
+  return { kind: "eventBinding", preventDefault: true, toMsg: () => message };
+}
+
+export function every<Msg>(
+  milliseconds: number,
+  toMessage: () => Msg,
+): ProgramSubscription<Msg> {
+  return {
+    key: `every:${String(milliseconds)}`,
+    subscribe: (dispatch) => {
+      const id = globalThis.setInterval(() => {
+        dispatch(toMessage());
+      }, milliseconds);
+      return () => {
+        globalThis.clearInterval(id);
+      };
+    },
+  };
+}
+
+export function keyPressed<Msg>(
+  toMessage: (key: string) => Msg,
+): ProgramSubscription<Msg> {
+  return {
+    key: "keyPressed",
+    subscribe: (dispatch) => {
+      const listener = (event: KeyboardEvent) => {
+        dispatch(toMessage(event.key));
+      };
+      globalThis.addEventListener("keydown", listener);
+      return () => {
+        globalThis.removeEventListener("keydown", listener);
+      };
+    },
+  };
+}
+
+export function windowResized<Msg>(
+  toMessage: (viewport: Viewport) => Msg,
+): ProgramSubscription<Msg> {
+  return {
+    key: "windowResized",
+    subscribe: (dispatch) => {
+      const listener = () => {
+        dispatch(
+          toMessage({
+            width: globalThis.innerWidth,
+            height: globalThis.innerHeight,
+          }),
+        );
+      };
+      globalThis.addEventListener("resize", listener);
+      const initial = globalThis.setTimeout(listener, 0);
+      return () => {
+        globalThis.clearTimeout(initial);
+        globalThis.removeEventListener("resize", listener);
+      };
+    },
+  };
+}
+
+export function start<Model, Msg, ProgramEffect>(
+  runtime: Runtime<Model, Msg, ProgramEffect>,
+): void {
+  const [state, effects] = runtime.init();
+
+  const dispatchMessage: Action<Model, Msg> = (model, message) => {
+    const [next, nextEffects] = runtime.update(model, message);
+    return [next, ...nextEffects.map(toEffectTuple)];
+  };
+
+  const runEffecter: ProgramEffecter<Model, ProgramEffect> = (
+    dispatch,
+    effect,
+  ) => {
+    return runtime.runEffect(
+      (message) => {
+        dispatch(dispatchMessage, message);
+      },
+      effect,
+    );
+  };
+
+  const toEffectTuple = (
+    effect: ProgramEffect,
+  ): ProgramEffectTuple<Model, ProgramEffect> => {
+    return [runEffecter, effect];
+  };
+
+  const runSubscriber: Subscriber<Model, ProgramSubscription<Msg>> = (
+    dispatch,
+    subscription,
+  ) => {
+    return subscription.subscribe((message) => {
+      dispatch(dispatchMessage, message);
+    });
+  };
+
+  const toSubscriptionTuple = (
+    subscription: ProgramSubscription<Msg>,
+  ): ProgramSubscriptionTuple<Model, Msg> => {
+    return [runSubscriber, subscription];
+  };
+
+  const init: Dispatchable<Model> = [state, ...effects.map(toEffectTuple)];
+  const props: App<Model> = {
+    init,
+    view: (model: Model) =>
+      withDispatch(
+        (message) => dispatchMessage(model, message as Msg),
+        () => runtime.view(model),
+      ),
+    node: runtime.node,
+  };
+
+  const subscriptions = runtime.subscriptions;
+
+  app<Model>(
+    subscriptions === undefined
+      ? props
+      : {
+          ...props,
+          subscriptions: (model) => subscriptions(model).map(toSubscriptionTuple),
+        },
+  );
 }
 
 export function app<State>({
@@ -316,7 +564,7 @@ function identityDispatch<State>(dispatch: Dispatch<State>): Dispatch<State> {
 
 function createVNode<State, Type extends 1 | 3>(
   tag: string,
-  props: Props<State>,
+  props: Props,
   children: Array<MaybeVNode<State>>,
   type: Type,
   node?: Node,
@@ -364,6 +612,104 @@ function createClass(value: ClassProp): string {
   return "";
 }
 
+function eventBinding<Msg>(
+  toMessage: (event: Event) => Msg,
+): EventBinding<Msg> {
+  return { kind: "eventBinding", preventDefault: false, toMsg: toMessage };
+}
+
+function normalizePropValue(value: unknown): unknown {
+  if (!isEventBinding(value)) {
+    return value;
+  }
+
+  const dispatch = currentDispatch;
+
+  if (dispatch === undefined) {
+    throw new Error("Event helpers can only be used while rendering a view");
+  }
+
+  return (_state: unknown, event: Event) => {
+    if (value.preventDefault) {
+      event.preventDefault();
+    }
+
+    return dispatch(value.toMsg(event));
+  };
+}
+
+function withDispatch<State>(
+  dispatch: (message: unknown) => unknown,
+  render: () => VNode<State>,
+): VNode<State> {
+  const previousDispatch = currentDispatch;
+  currentDispatch = dispatch;
+
+  try {
+    return render();
+  } finally {
+    currentDispatch = previousDispatch;
+  }
+}
+
+function isEventBinding(value: unknown): value is EventBinding<unknown> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "kind" in value &&
+    value.kind === "eventBinding"
+  );
+}
+
+function inputValue(event: Event): string {
+  const target = event.target;
+
+  if (target instanceof HTMLInputElement) {
+    return target.value;
+  }
+
+  if (target instanceof HTMLSelectElement) {
+    return target.value;
+  }
+
+  if (target instanceof HTMLTextAreaElement) {
+    return target.value;
+  }
+
+  return "";
+}
+
+function inputChecked(event: Event): boolean {
+  const target = event.target;
+  return target instanceof HTMLInputElement && target.checked;
+}
+
+function flattenChildren<State>(
+  children: ReadonlyArray<Child<State>>,
+): Array<VNode<State>> {
+  const flattened: Array<VNode<State>> = [];
+
+  for (const child of children) {
+    if (Array.isArray(child)) {
+      flattened.push(...flattenChildren<State>(child));
+      continue;
+    }
+
+    if (child === undefined || child === null || child === false || child === true) {
+      continue;
+    }
+
+    if (typeof child === "string" || typeof child === "number") {
+      flattened.push(text(child));
+      continue;
+    }
+
+    flattened.push(child as VNode<State>);
+  }
+
+  return flattened;
+}
+
 function isClassArray(value: ClassProp): value is ReadonlyArray<ClassProp> {
   return Array.isArray(value);
 }
@@ -372,12 +718,6 @@ function isClassRecord(
   value: ClassProp,
 ): value is Readonly<Record<string, boolean | undefined | null>> {
   return value !== null && typeof value === "object" && !isClassArray(value);
-}
-
-function isArrayOfChildren<State>(
-  value: MaybeVNode<State> | ReadonlyArray<MaybeVNode<State>>,
-): value is ReadonlyArray<MaybeVNode<State>> {
-  return Array.isArray(value);
 }
 
 function enqueue(callback: () => void): void {

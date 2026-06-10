@@ -3,16 +3,30 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import {
   app,
   assertNever,
+  changed,
+  checkedChanged,
+  clicked,
+  dragEnded,
+  dragEntered,
+  dragStarted,
+  every,
+  fragment,
   h,
+  inputChanged,
+  keyPressed,
   memo,
   noEffect,
+  start,
+  submitted,
   text,
   typedH,
+  windowResized,
   type Action,
   type Effecter,
   type Indexable,
   type Key,
   type MemoView,
+  type Runtime,
   type Subscriber,
   type TypedH,
   type VNode,
@@ -77,6 +91,7 @@ describe("VNode helpers", () => {
         type: "button",
       },
       child,
+      [" now"],
     );
 
     expect(vnode).toMatchObject({
@@ -86,10 +101,22 @@ describe("VNode helpers", () => {
         class: "button hot selected active",
         type: "button",
       },
-      children: [child],
+      children: [child, { tag: " now" }],
       type: 1,
     });
     expect(vnode.props).not.toHaveProperty("key");
+  });
+
+  test("supports undefined props, nested fragments, and primitive children", () => {
+    const children = fragment(undefined, "Hello ", [text("there"), false, 2]);
+    const vnode = h("p", undefined, children, null, true, undefined);
+
+    expect(vnode.props).toEqual({});
+    expect(vnode.children.map((child) => (child as VNode).tag)).toEqual([
+      "Hello ",
+      "there",
+      "2",
+    ]);
   });
 
   test("supports omitted children and class objects with no active values", () => {
@@ -135,6 +162,211 @@ describe("VNode helpers", () => {
     expect(() => assertNever("missing" as never)).toThrow(
       'Unhandled message: "missing"',
     );
+  });
+});
+
+describe("TEA island runtime", () => {
+  type IslandModel = Readonly<{
+    enabled: boolean;
+    text: string;
+    ticks: number;
+  }>;
+
+  type IslandMsg =
+    | Readonly<{ type: "clicked" }>
+    | Readonly<{ type: "changed"; value: string }>
+    | Readonly<{ type: "checked"; value: boolean }>
+    | Readonly<{ type: "submitted" }>
+    | Readonly<{ type: "tick" }>;
+
+  type IslandEffect = Readonly<{ type: "boot" }>;
+
+  test("starts with effects and dispatches event helper messages", async () => {
+    const mount = appendMount("<form></form>");
+    const effects: Array<string> = [];
+    const runtime: Runtime<IslandModel, IslandMsg, IslandEffect> = {
+      node: mount,
+      init: () => [
+        { enabled: false, text: "", ticks: 0 },
+        [{ type: "boot" }],
+      ],
+      update: (model, message) => {
+        switch (message.type) {
+          case "clicked":
+            return [{ ...model, text: "clicked" }, []];
+          case "changed":
+            return [{ ...model, text: message.value }, []];
+          case "checked":
+            return [{ ...model, enabled: message.value }, []];
+          case "submitted":
+            return [{ ...model, text: "submitted" }, []];
+          case "tick":
+            return [{ ...model, ticks: model.ticks + 1 }, []];
+        }
+      },
+      view: (model) =>
+        h("form", { onSubmit: submitted({ type: "submitted" }) }, [
+          h("button", { onClick: clicked({ type: "clicked" }), type: "button" }, [
+            model.text,
+          ]),
+          h("input", {
+            checked: model.enabled,
+            onChange: checkedChanged((value) => ({ type: "checked", value })),
+            type: "checkbox",
+          }),
+          h("textarea", {
+            onInput: inputChanged((value) => ({ type: "changed", value })),
+            value: model.text,
+          }),
+          h("span", {}, String(model.ticks)),
+        ]),
+      runEffect: (dispatch, effect) => {
+        effects.push(effect.type);
+        dispatch({ type: "tick" });
+      },
+    };
+
+    start(runtime);
+    await flushRender();
+
+    const button = requireElement("button");
+    button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flushRender();
+
+    expect(button.textContent).toBe("clicked");
+
+    const checkbox = requireElement("input") as HTMLInputElement;
+    checkbox.checked = true;
+    checkbox.dispatchEvent(new Event("change", { bubbles: true }));
+    await flushRender();
+
+    expect(checkbox.checked).toBe(true);
+
+    const textarea = requireElement("textarea") as HTMLTextAreaElement;
+    textarea.value = "typed";
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    await flushRender();
+
+    expect(textarea.value).toBe("typed");
+
+    const submitEvent = new Event("submit", {
+      bubbles: true,
+      cancelable: true,
+    });
+    requireElement("form").dispatchEvent(submitEvent);
+    await flushRender();
+
+    expect(submitEvent.defaultPrevented).toBe(true);
+    expect(requireElement("button").textContent).toBe("submitted");
+    expect(requireElement("span").textContent).toBe("1");
+    expect(effects).toEqual(["boot"]);
+  });
+
+  test("throws when event helpers are rendered outside start", () => {
+    expect(() => h("button", { onClick: clicked({ type: "clicked" }) })).toThrow(
+      "Event helpers can only be used while rendering a view",
+    );
+  });
+
+  test("reads input helper values from form controls and fallbacks", () => {
+    const input = globalThis.document.createElement("input");
+    input.value = "input";
+    const select = globalThis.document.createElement("select");
+    const option = globalThis.document.createElement("option");
+    option.value = "select";
+    select.append(option);
+    select.value = "select";
+    const textarea = globalThis.document.createElement("textarea");
+    textarea.value = "textarea";
+    const checkbox = globalThis.document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.checked = true;
+
+    const read = inputChanged((value) => value);
+    const checked = checkedChanged((value) => value);
+
+    expect(read.toMsg(eventFor(input, "input"))).toBe("input");
+    expect(read.toMsg(eventFor(select, "change"))).toBe("select");
+    expect(read.toMsg(eventFor(textarea, "input"))).toBe("textarea");
+    expect(read.toMsg(new Event("input"))).toBe("");
+    expect(checked.toMsg(eventFor(checkbox, "change"))).toBe(true);
+    expect(checked.toMsg(new Event("change"))).toBe(false);
+  });
+
+  test("creates simple message event bindings", () => {
+    expect(changed("change").toMsg(new Event("change"))).toBe("change");
+    expect(clicked("click").toMsg(new Event("click"))).toBe("click");
+    expect(dragStarted("start").toMsg(new Event("dragstart"))).toBe("start");
+    expect(dragEntered("enter").toMsg(new Event("dragenter"))).toBe("enter");
+    expect(dragEnded("end").toMsg(new Event("dragend"))).toBe("end");
+  });
+
+  test("provides generic browser subscriptions", async () => {
+    const messages: Array<unknown> = [];
+
+    const stopEvery = every(10, () => "tick").subscribe((message) => {
+      messages.push(message);
+    });
+    await vi.advanceTimersByTimeAsync(10);
+    stopEvery();
+    await vi.advanceTimersByTimeAsync(10);
+
+    const stopKeys = keyPressed((key) => ({ key })).subscribe((message) => {
+      messages.push(message);
+    });
+    globalThis.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" }));
+    stopKeys();
+
+    const stopResize = windowResized((viewport) => viewport).subscribe(
+      (message) => {
+        messages.push(message);
+      },
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    stopResize();
+
+    expect(messages).toEqual([
+      "tick",
+      { key: "Enter" },
+      { width: globalThis.innerWidth, height: globalThis.innerHeight },
+    ]);
+  });
+
+  test("starts runtime subscriptions that dispatch messages", async () => {
+    const mount = appendMount("<span></span>");
+    let dispatchTick: ((message: IslandMsg) => void) | undefined;
+    const subscription = {
+      key: "external",
+      subscribe: (dispatch: (message: IslandMsg) => void) => {
+        dispatchTick = dispatch;
+        return () => undefined;
+      },
+    };
+
+    start<IslandModel, IslandMsg, never>({
+      node: mount,
+      init: () => [{ enabled: false, text: "", ticks: 0 }, []],
+      update: (model, message) => {
+        switch (message.type) {
+          case "tick":
+            return [{ ...model, ticks: model.ticks + 1 }, []];
+          case "clicked":
+          case "changed":
+          case "checked":
+          case "submitted":
+            return [model, []];
+        }
+      },
+      view: (model) => h("span", {}, String(model.ticks)),
+      runEffect: () => undefined,
+      subscriptions: () => [subscription],
+    });
+
+    await flushRender();
+    dispatchTick?.({ type: "tick" });
+    await flushRender();
+
+    expect(requireElement("span").textContent).toBe("1");
   });
 });
 
@@ -641,6 +873,24 @@ describe("app", () => {
     expect(globalThis.document.body.textContent).toBe("");
   });
 
+  test("renders an empty text node for nullable root views", async () => {
+    const mount = appendMount("<div>shown</div>");
+    const dispatch = app<CounterState>({
+      init: initialState,
+      view: (state) =>
+        state.enabled
+          ? h<CounterState>("div", {}, text("shown"))
+          : (false as unknown as VNode<CounterState>),
+      node: mount,
+    });
+
+    await flushRender();
+    dispatch({ ...initialState, enabled: false });
+    await flushRender();
+
+    expect(globalThis.document.body.textContent).toBe("");
+  });
+
   test("reuses unkeyed children inside keyed middle patches", async () => {
     const mount = appendMount("<div></div>");
     const dispatch = app<Readonly<{ flip: boolean }>>({
@@ -835,4 +1085,10 @@ function requireElement(selector: string): Element {
 
 async function flushRender(): Promise<void> {
   await vi.runAllTimersAsync();
+}
+
+function eventFor(target: Element, type: string): Event {
+  const event = new Event(type, { bubbles: true });
+  target.dispatchEvent(event);
+  return event;
 }

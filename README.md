@@ -16,16 +16,16 @@ This is not meant to become a broad SPA framework. It exists for small interacti
 
 ## Status
 
-The runtime now follows Hyperapp's small API shape:
+The runtime has two layers:
 
-- `app()` for state, rendering, effects, subscriptions, and dispatch
-- `h()` for element VNodes
-- `typedH()` for state-aware view helpers
+- `start()` for Elm-like island programs with `Model`, `Msg`, `Effect`, `init`, `update`, `view`, and `subscriptions`
+- `h()` and `fragment()` for TSX-friendly element VNodes
+- package-provided JSX types for TSX islands
 - `text()` for text VNodes
 - `memo()` for memoized view islands
-- action functions and direct state dispatches
-- effect functions and `[effect, payload]` tuples
-- subscription functions and `[subscriber, payload]` tuples
+- event helpers such as `clicked`, `inputChanged`, `checkedChanged`, and `submitted`
+- browser subscription helpers such as `every`, `keyPressed`, and `windowResized`
+- lower-level `app()` support for the small Hyperapp-shaped runtime underneath
 - keyed DOM patching
 
 The package also includes:
@@ -65,35 +65,44 @@ npm run bench
 
 ## API Shape
 
-Hypertea is intentionally close to Hyperapp:
+Application islands should use `start()`:
 
 ```ts
-import { app, text, typedH, type Action } from "@pairshaped/hypertea"
+import { clicked, h, start, type Runtime, type VNode } from "@pairshaped/hypertea"
 
-type State = {
+type Model = {
   readonly count: number
 }
 
-const Increment: Action<State> = (state) => ({
-  count: state.count + 1,
-})
+type Msg = { readonly type: "increment" }
+type Effect = never
 
-const h = typedH<State>()
 const node = document.querySelector("#counter")
 
 if (node === null) {
   throw new Error("Missing #counter mount node")
 }
 
-app<State>({
-  init: { count: 0 },
-  view: (state) =>
-    h("button", { onclick: Increment }, text(String(state.count))),
+const runtime: Runtime<Model, Msg, Effect> = {
+  init: () => [{ count: 0 }, []],
+  update: (model, message) => {
+    switch (message.type) {
+      case "increment":
+        return [{ count: model.count + 1 }, []]
+    }
+  },
+  view: (model): VNode<Model> =>
+    h("button", { onClick: clicked({ type: "increment" }) }, String(model.count)),
+  runEffect: () => undefined,
   node,
-})
+}
+
+start(runtime)
 ```
 
-Actions may return state directly or a tuple of `[state, ...effects]`. Effects and subscriptions are managed by the runtime so ordinary island code can stay focused on state transitions.
+`update` returns `[model, effects]`. Effects and subscriptions are managed by the runtime so ordinary island code can stay focused on state transitions.
+
+The lower-level `app()` API remains available for runtime internals and benchmarks. Application code should prefer `start()`.
 
 ## Non-Goals
 
