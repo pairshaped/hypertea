@@ -21,6 +21,7 @@ type PatchableElement = Element & {
   style: CSSStyleDeclaration & Record<string, string>;
 };
 type PropsRecord = Readonly<Record<string, unknown>>;
+type MountedVNode<State> = VNode<State> & { node: Node };
 
 export type ClassProp =
   | boolean
@@ -157,18 +158,23 @@ export function h<State>(
 ): ElementVNode<State> {
   const { class: classValue } = props;
   const key = props.key;
-  const rest = Object.fromEntries(
-    Object.entries(props).filter(
-      ([name]) => name !== "key" && name !== "class",
-    ),
-  ) as Props<State>;
+  const nextProps: Record<string, unknown> = {};
+
+  for (const name in props) {
+    if (name !== "key" && name !== "class") {
+      nextProps[name] = props[name];
+    }
+  }
+
   const className = createClass(classValue);
-  const nextProps =
-    className.length > 0 ? { ...rest, class: className } : { ...rest };
+
+  if (className.length > 0) {
+    nextProps.class = className;
+  }
 
   return createVNode(
     tag,
-    nextProps,
+    nextProps as Props<State>,
     isArrayOfChildren(children) ? [...children] : [children],
     elementNodeType,
     undefined,
@@ -331,21 +337,41 @@ function createClass(value: ClassProp): string {
     return value;
   }
 
-  if (Array.isArray(value)) {
-    return value
-      .map(createClass)
-      .filter((className) => className.length > 0)
-      .join(" ");
+  let className = "";
+
+  if (isClassArray(value)) {
+    for (const item of value) {
+      const next = createClass(item);
+
+      if (next.length > 0) {
+        className += `${className.length > 0 ? " " : ""}${next}`;
+      }
+    }
+
+    return className;
   }
 
-  if (value !== null && typeof value === "object") {
-    return Object.entries(value)
-      .filter(([, enabled]) => enabled === true)
-      .map(([className]) => className)
-      .join(" ");
+  if (isClassRecord(value)) {
+    for (const name in value) {
+      if (value[name] === true) {
+        className += `${className.length > 0 ? " " : ""}${name}`;
+      }
+    }
+
+    return className;
   }
 
   return "";
+}
+
+function isClassArray(value: ClassProp): value is ReadonlyArray<ClassProp> {
+  return Array.isArray(value);
+}
+
+function isClassRecord(
+  value: ClassProp,
+): value is Readonly<Record<string, boolean | undefined | null>> {
+  return value !== null && typeof value === "object" && !isClassArray(value);
 }
 
 function isArrayOfChildren<State>(
@@ -530,19 +556,30 @@ function patchStyle(
 ): void {
   const oldStyle = isPlainPayload(oldValue) ? oldValue : {};
   const newStyle = isPlainPayload(newValue) ? newValue : {};
-  const keys = new Set([...Object.keys(oldStyle), ...Object.keys(newStyle)]);
 
-  for (const key of keys) {
-    const value = newStyle[key];
-    const nextValue = typeof value === "string" ? value : "";
-
-    if (key.startsWith("-")) {
-      style.setProperty(key, nextValue);
-      continue;
+  for (const key in oldStyle) {
+    if (!(key in newStyle)) {
+      setStyleValue(style, key, "");
     }
-
-    style[key] = nextValue;
   }
+
+  for (const key in newStyle) {
+    const value = newStyle[key];
+    setStyleValue(style, key, typeof value === "string" ? value : "");
+  }
+}
+
+function setStyleValue(
+  style: CSSStyleDeclaration & Record<string, string>,
+  key: string,
+  value: string,
+): void {
+  if (key.startsWith("-")) {
+    style.setProperty(key, value);
+    return;
+  }
+
+  style[key] = value;
 }
 
 function patchEvent(
@@ -666,27 +703,47 @@ function patchElement<State>(
 ): Node {
   const element = node as PatchableElement;
   const nextSvg = isSvg || newVNode.tag === "svg";
-  const propKeys = new Set([
-    ...Object.keys(oldVNode.props),
-    ...Object.keys(newVNode.props),
-  ]);
 
-  for (const key of propKeys) {
+  for (const key in oldVNode.props) {
     const oldValue = oldVNode.props[key];
     const newValue = newVNode.props[key];
-    const currentValue =
-      key === "value" || key === "selected" || key === "checked"
-        ? element[key]
-        : oldValue;
+    patchChangedProperty(element, key, oldValue, newValue, listener, nextSvg);
+  }
 
-    if (!Object.is(currentValue, newValue)) {
-      patchProperty(element, key, oldValue, newValue, listener, nextSvg);
+  for (const key in newVNode.props) {
+    if (!(key in oldVNode.props)) {
+      patchChangedProperty(
+        element,
+        key,
+        undefined,
+        newVNode.props[key],
+        listener,
+        nextSvg,
+      );
     }
   }
 
   patchChildren(element, oldVNode.children, newVNode.children, listener, nextSvg);
   newVNode.node = node;
   return node;
+}
+
+function patchChangedProperty(
+  element: PatchableElement,
+  key: string,
+  oldValue: unknown,
+  newValue: unknown,
+  listener: EventListener,
+  isSvg: boolean,
+): void {
+  const currentValue =
+    key === "value" || key === "selected" || key === "checked"
+      ? element[key]
+      : oldValue;
+
+  if (!Object.is(currentValue, newValue)) {
+    patchProperty(element, key, oldValue, newValue, listener, isSvg);
+  }
 }
 
 function patchChildren<State>(
@@ -696,11 +753,141 @@ function patchChildren<State>(
   listener: EventListener,
   isSvg: boolean,
 ): void {
+  let oldHead = 0;
+  let newHead = 0;
+  let oldTail = oldChildren.length - 1;
+  let newTail = newChildren.length - 1;
+
+  while (oldHead <= oldTail && newHead <= newTail) {
+    const oldChild = maybeVNode(oldChildren[oldHead]);
+    const oldKey = oldChild.key;
+
+    if (oldKey === undefined || oldKey === null || oldKey !== getKey(newChildren[newHead])) {
+      break;
+    }
+
+    newChildren[newHead] = patchMatchedChild(
+      parent,
+      oldChild,
+      newChildren[newHead],
+      listener,
+      isSvg,
+    );
+    oldChildren[oldHead] = oldChild;
+    oldHead += 1;
+    newHead += 1;
+  }
+
+  while (oldHead <= oldTail && newHead <= newTail) {
+    const oldChild = maybeVNode(oldChildren[oldTail]);
+    const oldKey = oldChild.key;
+
+    if (oldKey === undefined || oldKey === null || oldKey !== getKey(newChildren[newTail])) {
+      break;
+    }
+
+    newChildren[newTail] = patchMatchedChild(
+      parent,
+      oldChild,
+      newChildren[newTail],
+      listener,
+      isSvg,
+    );
+    oldChildren[oldTail] = oldChild;
+    oldTail -= 1;
+    newTail -= 1;
+  }
+
+  if (oldHead > oldTail) {
+    insertNewChildren(parent, oldChildren, newChildren, newHead, newTail, listener, isSvg);
+    return;
+  }
+
+  if (newHead > newTail) {
+    removeOldChildren(parent, oldChildren, oldHead, oldTail);
+    return;
+  }
+
+  patchKeyedMiddle(
+    parent,
+    oldChildren,
+    newChildren,
+    oldHead,
+    oldTail,
+    newHead,
+    newTail,
+    listener,
+    isSvg,
+  );
+}
+
+function patchMatchedChild<State>(
+  parent: Node,
+  oldChild: VNode<State>,
+  newChild: MaybeVNode<State>,
+  listener: EventListener,
+  isSvg: boolean,
+): VNode<State> {
+  const normalizedNewChild = maybeVNode(newChild, oldChild);
+  patch(
+    parent,
+    mountedVNode(oldChild).node,
+    oldChild,
+    normalizedNewChild,
+    listener,
+    isSvg,
+  );
+  return normalizedNewChild;
+}
+
+function insertNewChildren<State>(
+  parent: Node,
+  oldChildren: Array<MaybeVNode<State>>,
+  newChildren: Array<MaybeVNode<State>>,
+  newHead: number,
+  newTail: number,
+  listener: EventListener,
+  isSvg: boolean,
+): void {
+  const anchor = getNode(oldChildren[newHead]);
+
+  while (newHead <= newTail) {
+    const child = maybeVNode(newChildren[newHead]);
+    newChildren[newHead] = child;
+    parent.insertBefore(createNode(child, listener, isSvg), anchor);
+    newHead += 1;
+  }
+}
+
+function removeOldChildren<State>(
+  parent: Node,
+  oldChildren: Array<MaybeVNode<State>>,
+  oldHead: number,
+  oldTail: number,
+): void {
+  while (oldHead <= oldTail) {
+    removeChild(parent, maybeVNode(oldChildren[oldHead]));
+    oldHead += 1;
+  }
+}
+
+function patchKeyedMiddle<State>(
+  parent: Node,
+  oldChildren: Array<MaybeVNode<State>>,
+  newChildren: Array<MaybeVNode<State>>,
+  oldHead: number,
+  oldTail: number,
+  newHead: number,
+  newTail: number,
+  listener: EventListener,
+  isSvg: boolean,
+): void {
   const oldKeyed = new Map<Key, VNode<State>>();
   const oldUnkeyed: Array<VNode<State>> = [];
 
-  for (const child of oldChildren) {
-    const oldChild = maybeVNode(child);
+  for (let index = oldHead; index <= oldTail; index += 1) {
+    const oldChild = maybeVNode(oldChildren[index]);
+    oldChildren[index] = oldChild;
 
     if (oldChild.key === undefined || oldChild.key === null) {
       oldUnkeyed.push(oldChild);
@@ -713,7 +900,7 @@ function patchChildren<State>(
   const usedOldNodes = new Set<Node>();
   let unkeyedIndex = 0;
 
-  for (let index = 0; index < newChildren.length; index += 1) {
+  for (let index = newHead; index <= newTail; index += 1) {
     const newChild = newChildren[index];
     const oldChild = pickOldChild(
       newChild,
@@ -754,8 +941,8 @@ function patchChildren<State>(
     newChildren[index] = normalizedNewChild;
   }
 
-  for (const child of oldChildren) {
-    const oldChild = maybeVNode(child);
+  for (let index = oldHead; index <= oldTail; index += 1) {
+    const oldChild = maybeVNode(oldChildren[index]);
 
     if (
       oldChild.node?.parentNode === parent &&
@@ -764,6 +951,24 @@ function patchChildren<State>(
       parent.removeChild(oldChild.node);
     }
   }
+}
+
+function getKey<State>(child: MaybeVNode<State>): Key | null | undefined {
+  return child === false || child === true || child == null ? undefined : child.key;
+}
+
+function getNode<State>(child: MaybeVNode<State>): Node | null {
+  return child === false || child === true || child == null
+    ? null
+    : mountedVNode(child).node;
+}
+
+function removeChild<State>(parent: Node, child: VNode<State>): void {
+  parent.removeChild(mountedVNode(child).node);
+}
+
+function mountedVNode<State>(child: VNode<State>): MountedVNode<State> {
+  return child as MountedVNode<State>;
 }
 
 function pickOldChild<State>(

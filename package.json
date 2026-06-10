@@ -17,6 +17,7 @@
     "README.md"
   ],
   "scripts": {
+    "bench": "npm run build && node benchmark/dom-patching.mjs",
     "build": "tsc -p tsconfig.build.json",
     "check": "npm run typecheck && npm run lint && npm run test:coverage && npm run build",
     "lint": "eslint .",
@@ -37,6 +38,7 @@
     "@types/node": "^25.9.2",
     "@vitest/coverage-v8": "^4.1.8",
     "eslint": "^10.4.1",
+    "hyperapp": "^2.0.22",
     "jsdom": "^27.0.1",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.61.0",
