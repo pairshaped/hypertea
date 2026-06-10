@@ -332,6 +332,37 @@ describe("app", () => {
     expect(starts).toEqual([0]);
   });
 
+  test("restarts subscriptions when payload keys are removed", () => {
+    const starts: Array<string> = [];
+    const stops: Array<string> = [];
+    const subscriber: Subscriber<
+      CounterState,
+      { id: string; removed?: string }
+    > = (_dispatch, payload) => {
+      starts.push(payload.id);
+      return () => {
+        stops.push(payload.id);
+      };
+    };
+    const dispatch = app<CounterState>({
+      init: initialState,
+      subscriptions: (state) => [
+        [
+          subscriber,
+          {
+            id: "same",
+            ...(state.enabled ? { removed: "present" } : {}),
+          },
+        ],
+      ],
+    });
+
+    dispatch({ ...initialState, enabled: false });
+
+    expect(starts).toEqual(["same", "same"]);
+    expect(stops).toEqual(["same"]);
+  });
+
   test("falls back to setTimeout when animation frames are unavailable", async () => {
     vi.stubGlobal("requestAnimationFrame", undefined);
     const mount = appendMount("<div></div>");
