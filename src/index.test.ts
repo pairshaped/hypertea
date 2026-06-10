@@ -610,6 +610,42 @@ describe("app", () => {
     expect(globalThis.document.body.textContent).toBe("");
   });
 
+  test("reuses unkeyed children inside keyed middle patches", async () => {
+    const mount = appendMount("<div></div>");
+    const dispatch = app<Readonly<{ flip: boolean }>>({
+      init: { flip: false },
+      view: (state) =>
+        h<Readonly<{ flip: boolean }>>(
+          "div",
+          {},
+          state.flip
+            ? [
+                h<Readonly<{ flip: boolean }>>("span", { key: "b" }, text("b")),
+                h<Readonly<{ flip: boolean }>>("em", {}, text("loose-next")),
+                h<Readonly<{ flip: boolean }>>("span", { key: "a" }, text("a")),
+                h<Readonly<{ flip: boolean }>>("span", { key: "c" }, text("c")),
+                h<Readonly<{ flip: boolean }>>("span", { key: "d" }, text("d")),
+              ]
+            : [
+                h<Readonly<{ flip: boolean }>>("span", { key: "a" }, text("a")),
+                h<Readonly<{ flip: boolean }>>("em", {}, text("loose")),
+                h<Readonly<{ flip: boolean }>>("span", { key: "b" }, text("b")),
+              ],
+        ),
+      node: mount,
+    });
+
+    await flushRender();
+
+    const loose = requireElement("em");
+
+    dispatch({ flip: true });
+    await flushRender();
+
+    expect(requireElement("em")).toBe(loose);
+    expect(globalThis.document.body.textContent).toBe("bloose-nextacd");
+  });
+
   test("reuses memoized views until memo data changes", async () => {
     const mount = appendMount("<div></div>");
     const renderLabels: Array<string> = [];
