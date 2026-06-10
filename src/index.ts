@@ -808,6 +808,24 @@ function patchChildren<State>(
     return;
   }
 
+  if (
+    allUnkeyed(oldChildren, oldHead, oldTail) &&
+    allUnkeyed(newChildren, newHead, newTail)
+  ) {
+    patchUnkeyedMiddle(
+      parent,
+      oldChildren,
+      newChildren,
+      oldHead,
+      oldTail,
+      newHead,
+      newTail,
+      listener,
+      isSvg,
+    );
+    return;
+  }
+
   patchKeyedMiddle(
     parent,
     oldChildren,
@@ -869,6 +887,54 @@ function removeOldChildren<State>(
     removeChild(parent, maybeVNode(oldChildren[oldHead]));
     oldHead += 1;
   }
+}
+
+function allUnkeyed<State>(
+  children: Array<MaybeVNode<State>>,
+  head: number,
+  tail: number,
+): boolean {
+  while (head <= tail) {
+    if (getKey(children[head]) !== undefined && getKey(children[head]) !== null) {
+      return false;
+    }
+
+    head += 1;
+  }
+
+  return true;
+}
+
+function patchUnkeyedMiddle<State>(
+  parent: Node,
+  oldChildren: Array<MaybeVNode<State>>,
+  newChildren: Array<MaybeVNode<State>>,
+  oldHead: number,
+  oldTail: number,
+  newHead: number,
+  newTail: number,
+  listener: EventListener,
+  isSvg: boolean,
+): void {
+  while (oldHead <= oldTail && newHead <= newTail) {
+    const oldChild = maybeVNode(oldChildren[oldHead]);
+    const newChild = maybeVNode(newChildren[newHead], oldChild);
+    newChildren[newHead] = newChild;
+    oldChildren[oldHead] = oldChild;
+    patch(
+      parent,
+      mountedVNode(oldChild).node,
+      oldChild,
+      newChild,
+      listener,
+      isSvg,
+    );
+    oldHead += 1;
+    newHead += 1;
+  }
+
+  insertNewChildren(parent, oldChildren, newChildren, newHead, newTail, listener, isSvg);
+  removeOldChildren(parent, oldChildren, oldHead, oldTail);
 }
 
 function patchKeyedMiddle<State>(
