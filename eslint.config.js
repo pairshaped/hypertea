@@ -16,7 +16,7 @@ const sideEffectGlobals = [
 
 export default tseslint.config(
   {
-    ignores: ["coverage/", "dist/", "node_modules/", "eslint.config.js"],
+    ignores: ["benchmark/", "coverage/", "dist/", "node_modules/", "eslint.config.js"],
   },
   js.configs.recommended,
   ...tseslint.configs.strictTypeChecked,

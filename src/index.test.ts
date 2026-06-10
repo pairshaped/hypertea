@@ -72,7 +72,7 @@ describe("VNode helpers", () => {
           false,
           null,
           undefined,
-          ["hot", { selected: true, disabled: false, hidden: null }],
+          ["hot", { selected: true, active: true, disabled: false, hidden: null }],
         ],
         type: "button",
       },
@@ -83,7 +83,7 @@ describe("VNode helpers", () => {
       tag: "button",
       key: "primary",
       props: {
-        class: "button hot selected",
+        class: "button hot selected active",
         type: "button",
       },
       children: [child],
@@ -93,7 +93,9 @@ describe("VNode helpers", () => {
   });
 
   test("supports omitted children and class objects with no active values", () => {
-    const vnode = h<CounterState>("div", { class: { hidden: false } });
+    const vnode = h<CounterState>("div", {
+      class: { hidden: false, missing: null },
+    });
 
     expect(vnode.props).not.toHaveProperty("class");
     expect(vnode.children).toEqual([]);
@@ -536,6 +538,78 @@ describe("app", () => {
     expect(globalThis.document.body.textContent).toBe("");
   });
 
+  test("patches child lists through head, tail, append, remove, and keyed middle paths", async () => {
+    const mount = appendMount("<ol></ol>");
+    const dispatch = app<Readonly<{ items: ReadonlyArray<string> }>>({
+      init: { items: ["a", "b", "c"] },
+      view: renderKeyedList,
+      node: mount,
+    });
+
+    await flushRender();
+
+    const firstA = requireElement("[data-id='a']");
+    const firstB = requireElement("[data-id='b']");
+    const firstC = requireElement("[data-id='c']");
+
+    dispatch({ items: ["a", "b", "c", "d"] });
+    await flushRender();
+
+    expect(requireElement("[data-id='a']")).toBe(firstA);
+    expect(requireElement("[data-id='b']")).toBe(firstB);
+    expect(requireElement("[data-id='c']")).toBe(firstC);
+    expect(globalThis.document.body.textContent).toBe("abcd");
+
+    dispatch({ items: ["a", "c", "d"] });
+    await flushRender();
+
+    expect(requireElement("[data-id='a']")).toBe(firstA);
+    expect(requireElement("[data-id='c']")).toBe(firstC);
+    expect(globalThis.document.querySelector("[data-id='b']")).toBeNull();
+    expect(globalThis.document.body.textContent).toBe("acd");
+
+    dispatch({ items: ["a", "x", "c", "d"] });
+    await flushRender();
+
+    expect(requireElement("[data-id='a']")).toBe(firstA);
+    expect(requireElement("[data-id='c']")).toBe(firstC);
+    expect(globalThis.document.body.textContent).toBe("axcd");
+
+    const firstD = requireElement("[data-id='d']");
+
+    dispatch({ items: ["a", "d", "x", "c"] });
+    await flushRender();
+
+    expect(requireElement("[data-id='a']")).toBe(firstA);
+    expect(requireElement("[data-id='c']")).toBe(firstC);
+    expect(requireElement("[data-id='d']")).toBe(firstD);
+    expect(globalThis.document.body.textContent).toBe("adxc");
+  });
+
+  test("removes a keyed child when the next child is false", async () => {
+    const mount = appendMount("<div></div>");
+    const dispatch = app<CounterState>({
+      init: initialState,
+      view: (state) =>
+        h<CounterState>(
+          "div",
+          {},
+          state.enabled
+            ? h<CounterState>("span", { key: "optional" }, text("shown"))
+            : false,
+        ),
+      node: mount,
+    });
+
+    await flushRender();
+    expect(globalThis.document.body.textContent).toBe("shown");
+
+    dispatch({ ...initialState, enabled: false });
+    await flushRender();
+
+    expect(globalThis.document.body.textContent).toBe("");
+  });
+
   test("reuses memoized views until memo data changes", async () => {
     const mount = appendMount("<div></div>");
     const renderLabels: Array<string> = [];
@@ -579,6 +653,16 @@ describe("app", () => {
     expect(renderLabels).toEqual(["start"]);
   });
 });
+
+function renderKeyedList(state: Readonly<{ items: ReadonlyArray<string> }>): VNode<Readonly<{ items: ReadonlyArray<string> }>> {
+  return h<Readonly<{ items: ReadonlyArray<string> }>>(
+    "ol",
+    {},
+    state.items.map((item) =>
+      h<Readonly<{ items: ReadonlyArray<string> }>>("li", { key: item, "data-id": item }, text(item)),
+    ),
+  );
+}
 
 function renderMixedView(state: CounterState): VNode<CounterState> {
   return h<CounterState>("div", { id: "mixed" }, [

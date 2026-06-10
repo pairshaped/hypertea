@@ -56,9 +56,12 @@ npm run lint
 npm run test:coverage
 npm run build
 npm run check
+npm run bench
 ```
 
 `npm run check` is the command to run before handing work back.
+
+`npm run bench` builds Hypertea and compares its DOM patching against Hyperapp in jsdom. Treat the numbers as regression signals and optimization guidance, not browser parity proof.
 
 ## API Shape
 
@@ -106,3 +109,4 @@ Actions may return state directly or a tuple of `[state, ...effects]`. Effects a
 - [0002: Managed Effects and Subscriptions](docs/adr/0002-managed-effects-and-subscriptions.md)
 - [0003: Strictness and Coverage](docs/adr/0003-strictness-and-coverage.md)
 - [0004: Package Boundaries](docs/adr/0004-package-boundaries.md)
+- [0005: DOM Patching Performance](docs/adr/0005-dom-patching-performance.md)
