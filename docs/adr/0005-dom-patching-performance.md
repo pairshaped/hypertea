@@ -40,7 +40,7 @@ The package includes a jsdom benchmark suite:
 npm run bench
 ```
 
-The suite compares Hypertea to Hyperapp on text updates, form property/style updates, append/remove keyed rows, keyed middle moves, and keyed reversals.
+The suite compares Hypertea to Hyperapp on text updates, static-shape rerenders, form property/style updates, class-heavy forms, append/remove keyed rows, keyed middle moves, keyed reversals, mixed contact-row lists, memoized children, recycled SSR rows, event dispatch, and subscription preserve/restart paths.
 
 Jsdom timings are not browser timings. They are useful for measuring relative changes in this repo and for spotting regressions before testing in a real browser.
 
