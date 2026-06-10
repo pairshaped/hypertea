@@ -660,6 +660,7 @@ describe("app", () => {
             : [
                 h<Readonly<{ flip: boolean }>>("span", { key: "a" }, text("a")),
                 h<Readonly<{ flip: boolean }>>("em", {}, text("loose")),
+                h<Readonly<{ flip: boolean }>>("strong", {}, text("extra")),
                 h<Readonly<{ flip: boolean }>>("span", { key: "b" }, text("b")),
               ],
         ),
@@ -674,7 +675,62 @@ describe("app", () => {
     await flushRender();
 
     expect(requireElement("em")).toBe(loose);
+    expect(globalThis.document.querySelector("strong")).toBeNull();
     expect(globalThis.document.body.textContent).toBe("bloose-nextacd");
+  });
+
+  test("inserts missing keyed children when the middle grows", async () => {
+    const mount = appendMount("<ol></ol>");
+    const dispatch = app<Readonly<{ items: ReadonlyArray<string> }>>({
+      init: { items: ["a", "b", "c"] },
+      view: renderKeyedList,
+      node: mount,
+    });
+
+    await flushRender();
+
+    const firstA = requireElement("[data-id='a']");
+    const firstC = requireElement("[data-id='c']");
+
+    dispatch({ items: ["a", "x", "y", "z", "c"] });
+    await flushRender();
+
+    expect(requireElement("[data-id='a']")).toBe(firstA);
+    expect(requireElement("[data-id='c']")).toBe(firstC);
+    expect(globalThis.document.querySelector("[data-id='b']")).toBeNull();
+    expect(globalThis.document.body.textContent).toBe("axyzc");
+  });
+
+  test("removes unkeyed children before a moved keyed child", async () => {
+    const mount = appendMount("<div></div>");
+    const dispatch = app<Readonly<{ flip: boolean }>>({
+      init: { flip: false },
+      view: (state) =>
+        h<Readonly<{ flip: boolean }>>(
+          "div",
+          {},
+          state.flip
+            ? [
+                h<Readonly<{ flip: boolean }>>("span", { key: "b" }, text("b")),
+                h<Readonly<{ flip: boolean }>>("span", { key: "c" }, text("c")),
+                h<Readonly<{ flip: boolean }>>("span", { key: "d" }, text("d")),
+              ]
+            : [
+                h<Readonly<{ flip: boolean }>>("em", {}, text("loose")),
+                h<Readonly<{ flip: boolean }>>("span", { key: "b" }, text("b")),
+                h<Readonly<{ flip: boolean }>>("span", { key: "d" }, text("d")),
+              ],
+        ),
+      node: mount,
+    });
+
+    await flushRender();
+
+    dispatch({ flip: true });
+    await flushRender();
+
+    expect(globalThis.document.querySelector("em")).toBeNull();
+    expect(globalThis.document.body.textContent).toBe("bcd");
   });
 
   test("reuses memoized views until memo data changes", async () => {
