@@ -887,6 +887,23 @@ function insertNewChildren<State>(
   }
 }
 
+function insertNewChildrenBefore<State>(
+  parent: Node,
+  newChildren: Array<MaybeVNode<State>>,
+  newHead: number,
+  newTail: number,
+  anchor: Node | null,
+  listener: EventListener,
+  isSvg: boolean,
+): void {
+  while (newHead <= newTail) {
+    const child = maybeVNode(newChildren[newHead]);
+    newChildren[newHead] = child;
+    parent.insertBefore(createNode(child, listener, isSvg), anchor);
+    newHead += 1;
+  }
+}
+
 function removeOldChildren<State>(
   parent: Node,
   oldChildren: Array<MaybeVNode<State>>,
@@ -959,72 +976,124 @@ function patchKeyedMiddle<State>(
   isSvg: boolean,
 ): void {
   const oldKeyed = new Map<Key, VNode<State>>();
-  const oldUnkeyed: Array<VNode<State>> = [];
+  const newKeyed = new Set<Key>();
 
   for (let index = oldHead; index <= oldTail; index += 1) {
     const oldChild = maybeVNode(oldChildren[index]);
     oldChildren[index] = oldChild;
 
-    if (oldChild.key === undefined || oldChild.key === null) {
-      oldUnkeyed.push(oldChild);
+    if (oldChild.key !== undefined && oldChild.key !== null) {
+      oldKeyed.set(oldChild.key, oldChild);
+    }
+  }
+
+  while (newHead <= newTail) {
+    if (oldHead > oldTail) {
+      insertNewChildrenBefore(
+        parent,
+        newChildren,
+        newHead,
+        newTail,
+        getNode(oldChildren[oldHead]),
+        listener,
+        isSvg,
+      );
+      break;
+    }
+
+    const oldChild = maybeVNode(oldChildren[oldHead]);
+    const oldKey = oldChild.key;
+    const newChild = maybeVNode(newChildren[newHead], oldChild);
+    const newKey = newChild.key;
+    oldChildren[oldHead] = oldChild;
+    newChildren[newHead] = newChild;
+
+    if (
+      (oldKey !== undefined && oldKey !== null && newKeyed.has(oldKey)) ||
+      (newKey !== undefined &&
+        newKey !== null &&
+        newKey === getKey(oldChildren[oldHead + 1]))
+    ) {
+      if (oldKey === undefined || oldKey === null) {
+        removeChild(parent, oldChild);
+      }
+
+      oldHead += 1;
       continue;
     }
 
-    oldKeyed.set(oldChild.key, oldChild);
+    if (newKey === undefined || newKey === null) {
+      if (oldKey === undefined || oldKey === null) {
+        patch(
+          parent,
+          mountedVNode(oldChild).node,
+          oldChild,
+          newChild,
+          listener,
+          isSvg,
+        );
+        newHead += 1;
+      }
+
+      oldHead += 1;
+      continue;
+    }
+
+    if (oldKey === newKey) {
+      patch(
+        parent,
+        mountedVNode(oldChild).node,
+        oldChild,
+        newChild,
+        listener,
+        isSvg,
+      );
+      newKeyed.add(newKey);
+      oldHead += 1;
+      newHead += 1;
+      continue;
+    }
+
+    const keyedChild = oldKeyed.get(newKey);
+
+    if (keyedChild === undefined) {
+      patch(
+        parent,
+        mountedVNode(oldChild).node,
+        undefined,
+        newChild,
+        listener,
+        isSvg,
+      );
+    } else {
+      patch(
+        parent,
+        parent.insertBefore(mountedVNode(keyedChild).node, mountedVNode(oldChild).node),
+        keyedChild,
+        newChild,
+        listener,
+        isSvg,
+      );
+      newKeyed.add(newKey);
+    }
+
+    newHead += 1;
   }
 
-  const usedOldNodes = new Set<Node>();
-  let unkeyedIndex = 0;
+  while (oldHead <= oldTail) {
+    const oldChild = maybeVNode(oldChildren[oldHead]);
+    oldChildren[oldHead] = oldChild;
 
-  for (let index = newHead; index <= newTail; index += 1) {
-    const newChild = newChildren[index];
-    const oldChild = pickOldChild(
-      newChild,
-      oldKeyed,
-      oldUnkeyed,
-      unkeyedIndex,
-    );
-
-    if (
-      oldChild !== undefined &&
-      (oldChild.key === undefined || oldChild.key === null)
-    ) {
-      unkeyedIndex += 1;
+    if (oldChild.key === undefined || oldChild.key === null) {
+      removeChild(parent, oldChild);
     }
 
-    const currentNode = oldChild?.node ?? parent.childNodes[index];
-    const normalizedNewChild = maybeVNode(newChild, oldChild);
-    const patchedNode = patch(
-      parent,
-      currentNode ?? parent.appendChild(globalThis.document.createTextNode("")),
-      oldChild,
-      normalizedNewChild,
-      listener,
-      isSvg,
-    );
-    const wantedNode = parent.childNodes.item(index);
-
-    if (wantedNode !== patchedNode) {
-      parent.insertBefore(patchedNode, wantedNode);
-    }
-
-    usedOldNodes.add(patchedNode);
-
-    if (oldChild?.node !== undefined) {
-      usedOldNodes.add(oldChild.node);
-    }
-
-    newChildren[index] = normalizedNewChild;
+    oldHead += 1;
   }
 
-  for (let index = oldHead; index <= oldTail; index += 1) {
-    const oldChild = maybeVNode(oldChildren[index]);
-
-    if (
-      oldChild.node?.parentNode === parent &&
-      !usedOldNodes.has(oldChild.node)
-    ) {
-      parent.removeChild(oldChild.node);
+  for (const [key, oldChild] of oldKeyed) {
+    if (!newKeyed.has(key)) {
+      removeChild(parent, oldChild);
     }
   }
 }
@@ -1045,24 +1114,6 @@ function removeChild<State>(parent: Node, child: VNode<State>): void {
 
 function mountedVNode<State>(child: VNode<State>): MountedVNode<State> {
   return child as MountedVNode<State>;
-}
-
-function pickOldChild<State>(
-  newChild: MaybeVNode<State>,
-  keyed: ReadonlyMap<Key, VNode<State>>,
-  unkeyed: ReadonlyArray<VNode<State>>,
-  unkeyedIndex: number,
-): VNode<State> | undefined {
-  const key =
-    newChild === false || newChild === true || newChild == null
-      ? undefined
-      : newChild.key;
-
-  if (key !== undefined && key !== null) {
-    return keyed.get(key);
-  }
-
-  return unkeyed[unkeyedIndex];
 }
 
 function recordsChanged(a: PropsRecord, b: PropsRecord): boolean {

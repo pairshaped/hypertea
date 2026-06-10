@@ -20,6 +20,8 @@ The child patcher should optimize for the update shapes that small SSR islands h
 
 The runtime should use head and tail scans before allocating keyed lookup structures. It should allocate maps only for the unmatched middle of a child list, where keyed movement or insertion actually needs lookup.
 
+For keyed middle patches, Hypertea should use the same head-walking shape as Hyperapp: track keyed old children, walk the old and new middle once, move known keyed DOM nodes into place, and remove stale keyed nodes after the walk. This keeps reverse and move-heavy keyed updates in Hyperapp's neighbourhood without adding public API or framework machinery.
+
 ## Performance Goal
 
 Hypertea does not need to beat Hyperapp. It should stay within the same practical class for Curling-style islands:
@@ -31,6 +33,8 @@ Hypertea does not need to beat Hyperapp. It should stay within the same practica
 - no public API expansion solely for performance
 
 Benchmarks should be introduced before claiming parity. Until then, "fast like Hyperapp" means the patcher follows the same algorithmic shape and avoids obvious extra allocations on common paths.
+
+The current target is practical parity, not winning every row. A benchmark result is acceptable when most scenarios are near Hyperapp and no Curling-shaped island path is wildly slower. Current jsdom runs put Hypertea faster on simple text, static, form, append/remove, SSR recycle, click dispatch, and subscription restart paths, with keyed middle and mixed row reorders still close enough to track rather than block.
 
 ## Benchmarking
 
@@ -57,4 +61,5 @@ Jsdom timings are not browser timings. They are useful for measuring relative ch
 - Prefix and suffix keyed children patch without building keyed maps.
 - Append-only and remove-only child updates patch linearly.
 - Keyed middle reorders reuse existing DOM nodes.
+- Keyed reverse and move-heavy benchmarks remain in Hyperapp's performance neighbourhood.
 - The normal project check passes.
