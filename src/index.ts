@@ -471,28 +471,38 @@ function shouldRestart(nextPayload: unknown, oldPayload: unknown): boolean {
     return !Object.is(nextPayload, oldPayload);
   }
 
-  const keys = new Set([
-    ...Object.keys(nextPayload),
-    ...Object.keys(oldPayload),
-  ]);
-
-  for (const key of keys) {
-    const nextValue = nextPayload[key];
-    const oldValue = oldPayload[key];
-
-    if (Array.isArray(nextValue) && typeof nextValue[0] === "function") {
-      nextPayload[key] = oldValue;
+  for (const key in nextPayload) {
+    if (shouldPreservePayloadValue(nextPayload, oldPayload, key)) {
       continue;
     }
 
-    if (typeof nextValue === "function") {
-      nextPayload[key] = oldValue;
-      continue;
-    }
-
-    if (!Object.is(nextValue, oldValue)) {
+    if (!Object.is(nextPayload[key], oldPayload[key])) {
       return true;
     }
+  }
+
+  for (const key in oldPayload) {
+    if (!(key in nextPayload)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function shouldPreservePayloadValue(
+  nextPayload: Record<string, unknown>,
+  oldPayload: Record<string, unknown>,
+  key: string,
+): boolean {
+  const nextValue = nextPayload[key];
+
+  if (
+    (Array.isArray(nextValue) && typeof nextValue[0] === "function") ||
+    typeof nextValue === "function"
+  ) {
+    nextPayload[key] = oldPayload[key];
+    return true;
   }
 
   return false;
