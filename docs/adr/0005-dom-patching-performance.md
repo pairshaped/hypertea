@@ -24,7 +24,7 @@ For keyed middle patches, Hypertea should use the same head-walking shape as Hyp
 
 ## Performance Goal
 
-Hypertea does not need to beat Hyperapp. It should stay within the same practical class for Curling-style islands:
+Hypertea does not need to beat Hyperapp. It should stay within the same practical class for small SSR islands:
 
 - one render per animation frame
 - linear child reconciliation for normal append, remove, and same-order updates
@@ -34,7 +34,7 @@ Hypertea does not need to beat Hyperapp. It should stay within the same practica
 
 Benchmarks should be introduced before claiming parity. Until then, "fast like Hyperapp" means the patcher follows the same algorithmic shape and avoids obvious extra allocations on common paths.
 
-The current target is practical parity, not winning every row. A benchmark result is acceptable when most scenarios are near Hyperapp and no Curling-shaped island path is wildly slower. Current jsdom runs put Hypertea faster on simple text, static, form, append/remove, SSR recycle, click dispatch, and subscription restart paths, with keyed middle and mixed row reorders still close enough to track rather than block.
+The current target is practical parity, not winning every row. A benchmark result is acceptable when most scenarios are near Hyperapp and no island update path is wildly slower. Current jsdom runs put Hypertea faster on simple text, static, form, append/remove, SSR recycle, click dispatch, and subscription restart paths, with keyed middle and mixed row reorders still close enough to track rather than block.
 
 ## Benchmarking
 
@@ -52,7 +52,7 @@ Jsdom timings are not browser timings. They are useful for measuring relative ch
 
 - Keep the runtime small enough to read in one sitting.
 - Keep side effects contained inside the runtime and approved effect/subscription boundaries.
-- Preserve existing public APIs and Curling integration.
+- Preserve existing public APIs and host application integration.
 - Preserve 100 percent statement, branch, function, and line coverage.
 - Prefer clear local helper functions over a minified port when TypeScript needs help.
 
