@@ -209,6 +209,7 @@ type RunningSubscription<State> = readonly [
 const eventNames: Readonly<Record<string, string>> = {
   onChange: "onchange",
   onClick: "onclick",
+  onDblClick: "ondblclick",
   onDragEnd: "ondragend",
   onDragEnter: "ondragenter",
   onDragStart: "ondragstart",

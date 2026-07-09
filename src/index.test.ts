@@ -194,6 +194,8 @@ describe("TEA island runtime", () => {
         switch (message.type) {
           case "clicked":
             return [{ ...model, text: "clicked" }, []];
+          case "doubleClicked":
+            return [{ ...model, text: "double clicked" }, []];
           case "changed":
             return [{ ...model, text: message.value }, []];
           case "checked":
@@ -209,6 +211,11 @@ describe("TEA island runtime", () => {
           h("button", { onClick: clicked({ type: "clicked" }), type: "button" }, [
             model.text,
           ]),
+          h(
+            "button",
+            { onDblClick: clicked({ type: "doubleClicked" }), type: "button" },
+            ["double"],
+          ),
           h("input", {
             checked: model.enabled,
             onChange: checkedChanged((value) => ({ type: "checked", value })),
@@ -234,6 +241,12 @@ describe("TEA island runtime", () => {
     await flushRender();
 
     expect(button.textContent).toBe("clicked");
+
+    const doubleClickButton = requireElement("button:nth-of-type(2)");
+    doubleClickButton.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    await flushRender();
+
+    expect(button.textContent).toBe("double clicked");
 
     const checkbox = requireElement("input") as HTMLInputElement;
     checkbox.checked = true;
