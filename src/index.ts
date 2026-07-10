@@ -1151,6 +1151,7 @@ function createNode<State>(
     const nextSvg = isSvg || vdom.tag === "svg";
 
     for (const [key, value] of Object.entries(vdom.props)) {
+      if (patchAfterChildren(vdom.tag, key)) continue;
       patchProperty(element, key, undefined, value, listener, nextSvg);
     }
 
@@ -1159,6 +1160,8 @@ function createNode<State>(
       vdom.children[index] = child;
       node.appendChild(createNode(child, listener, nextSvg));
     }
+
+    patchDeferredProperties(element, vdom.tag, emptyObject, vdom.props, listener, nextSvg);
   }
 
   vdom.node = node;
@@ -1237,12 +1240,14 @@ function patchElement<State>(
   const nextSvg = isSvg || newVNode.tag === "svg";
 
   for (const key in oldVNode.props) {
+    if (patchAfterChildren(newVNode.tag, key)) continue;
     const oldValue = oldVNode.props[key];
     const newValue = newVNode.props[key];
     patchChangedProperty(element, key, oldValue, newValue, listener, nextSvg);
   }
 
   for (const key in newVNode.props) {
+    if (patchAfterChildren(newVNode.tag, key)) continue;
     if (!(key in oldVNode.props)) {
       patchChangedProperty(
         element,
@@ -1256,8 +1261,33 @@ function patchElement<State>(
   }
 
   patchChildren(element, oldVNode.children, newVNode.children, listener, nextSvg);
+  patchDeferredProperties(
+    element,
+    newVNode.tag,
+    oldVNode.props,
+    newVNode.props,
+    listener,
+    nextSvg,
+  );
   newVNode.node = node;
   return node;
+}
+
+function patchDeferredProperties(
+  element: PatchableElement,
+  tag: string | MemoView<unknown>,
+  oldProps: Props,
+  newProps: Props,
+  listener: EventListener,
+  isSvg: boolean,
+): void {
+  if (!patchAfterChildren(tag, "value")) return;
+  if (!("value" in oldProps) && !("value" in newProps)) return;
+  patchChangedProperty(element, "value", oldProps.value, newProps.value, listener, isSvg);
+}
+
+function patchAfterChildren(tag: string | MemoView<unknown>, key: string): boolean {
+  return tag === "select" && key === "value";
 }
 
 function patchChangedProperty(

@@ -648,6 +648,51 @@ describe("TEA island runtime", () => {
 });
 
 describe("app", () => {
+  test("selects a value after creating and patching its options", async () => {
+    const mount = appendMount("<div></div>");
+    const chooseSecond: Action<CounterState> = (state) => ({
+      ...state,
+      enabled: true,
+      label: "second",
+    });
+
+    app<CounterState>({
+      init: { ...initialState, enabled: false, label: "second" },
+      view: (state) =>
+        h<CounterState>("div", {},
+          h<CounterState>("button", { onclick: chooseSecond }, text("Load options")),
+          h<CounterState>(
+          "select",
+          { value: state.label },
+          h<CounterState>("option", { value: "" }, text("Choose")),
+          ...(state.enabled
+            ? [
+                h<CounterState>("option", { value: "first" }, text("First")),
+                h<CounterState>("option", { value: "second" }, text("Second")),
+              ]
+            : [h<CounterState>("option", { value: "second" }, text("Second"))]),
+          ),
+          h<CounterState>(
+            "select",
+            {},
+            h<CounterState>("option", { value: "plain" }, text("Plain")),
+          ),
+        ),
+      node: mount,
+    });
+
+    await flushRender();
+
+    const select = requireElement("select");
+    expect(select).toBeInstanceOf(HTMLSelectElement);
+    expect((select as HTMLSelectElement).value).toBe("second");
+
+    const button = requireElement("button");
+    button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flushRender();
+    expect((select as HTMLSelectElement).value).toBe("second");
+  });
+
   test("renders state, patches text and properties, and dispatches event actions", async () => {
     const mount = appendMount("<main id=\"app\">server</main>");
     const increment: Action<CounterState, Event> = (state) => ({
