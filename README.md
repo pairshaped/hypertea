@@ -69,7 +69,12 @@ npm run bench
 Server-rendered application islands should use `mountIslands()`:
 
 ```ts
-import { bindEvents, h, mountIslands, type VNode } from "@pairshaped/hypertea"
+import {
+  bindEvents,
+  h,
+  mountIslands,
+  type VNode,
+} from "@pairshaped/hypertea/program"
 
 type Model = {
   readonly count: number
@@ -104,7 +109,7 @@ mountIslands({
 
 Use `start()` directly when the host application already owns mount discovery or needs custom startup behavior.
 
-The lower-level `app()` API remains available for runtime internals and benchmarks. Application code should prefer `start()`.
+The lower-level `app()` API remains available from the package root for runtime internals and benchmarks. Application code should import from `@pairshaped/hypertea/program`, which exposes the typed program APIs without low-level dispatch or magic no-effect values.
 
 ## Non-Goals
 

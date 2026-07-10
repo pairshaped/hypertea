@@ -22,12 +22,18 @@ type PatchableElement = Element & {
 };
 type PropsRecord = Readonly<Record<string, unknown>>;
 type MountedVNode<State> = VNode<State> & { node: Node };
-type ProgramEffecter<Model, ProgramEffect> = Effecter<Model, ProgramEffect>;
-type ProgramEffectTuple<Model, ProgramEffect> = readonly [
-  effecter: ProgramEffecter<Model, ProgramEffect>,
-  payload: ProgramEffect,
+export type ProgramMsg = Readonly<{ type: string }>;
+export type ProgramEffect = Readonly<{ type: string }>;
+
+type ProgramEffecter<Model, Effect extends ProgramEffect> = (
+  dispatch: Dispatch<Model>,
+  effect: Effect,
+) => void | Promise<void>;
+type ProgramEffectTuple<Model, Effect extends ProgramEffect> = readonly [
+  effecter: ProgramEffecter<Model, Effect>,
+  payload: Effect,
 ];
-type ProgramSubscriptionTuple<Model, Msg> = readonly [
+type ProgramSubscriptionTuple<Model, Msg extends ProgramMsg> = readonly [
   subscriber: Subscriber<Model, ProgramSubscription<Msg>>,
   payload: ProgramSubscription<Msg>,
 ];
@@ -45,6 +51,10 @@ export type StyleProp = Partial<
 > &
   Readonly<Record<`--${string}`, string | null | undefined>>;
 
+/**
+ * Low-level `app` callbacks are bivariant because one dispatch collection stores
+ * heterogeneous payload types. Typed programs do not expose these callbacks.
+ */
 export type Action<State, Payload = unknown> = {
   bivarianceHack(state: State, payload: Payload): Dispatchable<State>;
 }["bivarianceHack"];
@@ -185,52 +195,61 @@ export type Viewport = Readonly<{
   height: number;
 }>;
 
-export type Transition<Model, ProgramEffect> = readonly [
+export type Transition<Model, Effect extends ProgramEffect> = readonly [
   model: Model,
-  effects: ReadonlyArray<ProgramEffect>,
+  effects: ReadonlyArray<Effect>,
 ];
 
-export type ProgramSubscriber<Msg> = (
+export type ProgramSubscriber<Msg extends ProgramMsg> = (
   dispatch: (message: Msg) => void,
 ) => Unsubscribe;
 
-export type ProgramSubscription<Msg> = Readonly<{
+export type ProgramSubscription<Msg extends ProgramMsg> = Readonly<{
   key: string;
   subscribe: ProgramSubscriber<Msg>;
 }>;
 
-type RuntimeBase<Model, Msg, ProgramEffect> = Readonly<{
-  init: () => Transition<Model, ProgramEffect>;
-  update: (model: Model, message: Msg) => Transition<Model, ProgramEffect>;
+type RuntimeBase<Model, Msg extends ProgramMsg, Effect extends ProgramEffect> = Readonly<{
+  init: () => Transition<Model, Effect>;
+  update: (model: Model, message: Msg) => Transition<Model, Effect>;
   view: (model: Model) => VNode<Model>;
   subscriptions?: (model: Model) => ReadonlyArray<ProgramSubscription<Msg>>;
   node: Element;
 }>;
 
-type RuntimeEffects<Msg, ProgramEffect> = [ProgramEffect] extends [never]
+type RuntimeEffects<Msg extends ProgramMsg, Effect extends ProgramEffect> = [Effect] extends [never]
   ? Readonly<{ runEffect?: never }>
   : Readonly<{
       runEffect: (
         dispatch: (message: Msg) => void,
-        effect: ProgramEffect,
+        effect: Effect,
       ) => void | Promise<void>;
     }>;
 
-export type Runtime<Model, Msg, ProgramEffect> = RuntimeBase<
+export type Runtime<
+  Model,
+  Msg extends ProgramMsg,
+  Effect extends ProgramEffect,
+> = RuntimeBase<
   Model,
   Msg,
-  ProgramEffect
+  Effect
 > &
-  RuntimeEffects<Msg, ProgramEffect>;
+  RuntimeEffects<Msg, Effect>;
 
-type IslandMountBase<Flags, Model, Msg, ProgramEffect> = Readonly<{
+type IslandMountBase<
+  Flags,
+  Model,
+  Msg extends ProgramMsg,
+  Effect extends ProgramEffect,
+> = Readonly<{
   selector: string;
   parseFlags: (value: unknown) => Flags;
   init: (
     flags: Flags,
     node: HTMLElement,
-  ) => Transition<Model, ProgramEffect>;
-  update: (model: Model, message: Msg) => Transition<Model, ProgramEffect>;
+  ) => Transition<Model, Effect>;
+  update: (model: Model, message: Msg) => Transition<Model, Effect>;
   view: (model: Model) => VNode<Model>;
   subscriptions?: (
     model: Model,
@@ -239,7 +258,7 @@ type IslandMountBase<Flags, Model, Msg, ProgramEffect> = Readonly<{
   ) => ReadonlyArray<ProgramSubscription<Msg>>;
 }>;
 
-type EffectlessIslandMount<Flags, Model, Msg> = IslandMountBase<
+type EffectlessIslandMount<Flags, Model, Msg extends ProgramMsg> = IslandMountBase<
   Flags,
   Model,
   Msg,
@@ -247,24 +266,34 @@ type EffectlessIslandMount<Flags, Model, Msg> = IslandMountBase<
 > &
   Readonly<{ runEffect?: never }>;
 
-type EffectfulIslandMount<Flags, Model, Msg, ProgramEffect> = IslandMountBase<
+type EffectfulIslandMount<
+  Flags,
+  Model,
+  Msg extends ProgramMsg,
+  Effect extends ProgramEffect,
+> = IslandMountBase<
   Flags,
   Model,
   Msg,
-  ProgramEffect
+  Effect
 > &
   Readonly<{
     runEffect: (
       dispatch: (message: Msg) => void,
-      effect: ProgramEffect,
+      effect: Effect,
       flags: Flags,
       node: HTMLElement,
     ) => void | Promise<void>;
   }>;
 
-export type IslandMount<Flags, Model, Msg, ProgramEffect> = [ProgramEffect] extends [never]
+export type IslandMount<
+  Flags,
+  Model,
+  Msg extends ProgramMsg,
+  Effect extends ProgramEffect,
+> = [Effect] extends [never]
   ? EffectlessIslandMount<Flags, Model, Msg>
-  : EffectfulIslandMount<Flags, Model, Msg, ProgramEffect>;
+  : EffectfulIslandMount<Flags, Model, Msg, Effect>;
 
 type RunningSubscription<State> = readonly [
   subscriber: Subscriber<State>,
@@ -405,7 +434,7 @@ export function submitted<Msg>(message: Msg): EventBinding<Msg> {
   return { kind: "eventBinding", preventDefault: true, toMsg: () => message };
 }
 
-export function every<Msg>(
+export function every<Msg extends ProgramMsg>(
   milliseconds: number,
   toMessage: () => Msg,
 ): ProgramSubscription<Msg> {
@@ -422,7 +451,7 @@ export function every<Msg>(
   };
 }
 
-export function keyPressed<Msg>(
+export function keyPressed<Msg extends ProgramMsg>(
   toMessage: (key: string) => Msg,
 ): ProgramSubscription<Msg> {
   return {
@@ -439,7 +468,7 @@ export function keyPressed<Msg>(
   };
 }
 
-export function windowResized<Msg>(
+export function windowResized<Msg extends ProgramMsg>(
   toMessage: (viewport: Viewport) => Msg,
 ): ProgramSubscription<Msg> {
   return {
@@ -463,8 +492,8 @@ export function windowResized<Msg>(
   };
 }
 
-export function start<Model, Msg, ProgramEffect>(
-  runtime: Runtime<Model, Msg, ProgramEffect>,
+export function start<Model, Msg extends ProgramMsg, Effect extends ProgramEffect>(
+  runtime: Runtime<Model, Msg, Effect>,
 ): void {
   const [state, effects] = runtime.init();
 
@@ -473,7 +502,7 @@ export function start<Model, Msg, ProgramEffect>(
     return [next, ...nextEffects.map(toEffectTuple)];
   };
 
-  const runEffecter: ProgramEffecter<Model, ProgramEffect> = (
+  const runEffecter: ProgramEffecter<Model, Effect> = (
     dispatch,
     effect,
   ) => {
@@ -490,8 +519,8 @@ export function start<Model, Msg, ProgramEffect>(
   };
 
   const toEffectTuple = (
-    effect: ProgramEffect,
-  ): ProgramEffectTuple<Model, ProgramEffect> => {
+    effect: Effect,
+  ): ProgramEffectTuple<Model, Effect> => {
     return [runEffecter, effect];
   };
 
@@ -533,15 +562,25 @@ export function start<Model, Msg, ProgramEffect>(
   );
 }
 
-export function mountIslands<Flags, Model, Msg, ProgramEffect>(
-  options: EffectfulIslandMount<Flags, Model, Msg, ProgramEffect>,
+export function mountIslands<
+  Flags,
+  Model,
+  Msg extends ProgramMsg,
+  Effect extends ProgramEffect,
+>(
+  options: EffectfulIslandMount<Flags, Model, Msg, Effect>,
 ): void;
-export function mountIslands<Flags, Model, Msg>(
+export function mountIslands<Flags, Model, Msg extends ProgramMsg>(
   options: EffectlessIslandMount<Flags, Model, Msg>,
 ): void;
-export function mountIslands<Flags, Model, Msg, ProgramEffect>(
+export function mountIslands<
+  Flags,
+  Model,
+  Msg extends ProgramMsg,
+  Effect extends ProgramEffect,
+>(
   options:
-    | EffectfulIslandMount<Flags, Model, Msg, ProgramEffect>
+    | EffectfulIslandMount<Flags, Model, Msg, Effect>
     | EffectlessIslandMount<Flags, Model, Msg>,
 ): void {
   if (typeof globalThis.document === "undefined") {
@@ -571,12 +610,12 @@ export function mountIslands<Flags, Model, Msg, ProgramEffect>(
         ...(runEffect === undefined
           ? {}
           : {
-              runEffect: (dispatch: (message: Msg) => void, effect: ProgramEffect) =>
+              runEffect: (dispatch: (message: Msg) => void, effect: Effect) =>
                 runEffect(dispatch, effect, flags, node),
             }),
         node,
         // Conditional generics lose their exact optional-property relationships here.
-      } as unknown as Runtime<Model, Msg, ProgramEffect>;
+      } as unknown as Runtime<Model, Msg, Effect>;
       start(runtime);
     } catch (error) {
       const detail = error instanceof Error ? error.message : "Unknown flags error";

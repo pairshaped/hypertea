@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import * as program from "./program.js";
 
 import {
   app,
@@ -23,6 +24,7 @@ import {
   type Indexable,
   type Key,
   type MemoView,
+  type ProgramSubscriber,
   type Runtime,
   type Subscriber,
   type Transition,
@@ -188,6 +190,54 @@ describe("TEA island runtime", () => {
 
     expect(effectless).toEqual({});
     expect(missingRunner).toEqual({});
+  });
+
+  test("strictly checks program callbacks and rejects magic effects", () => {
+    type TwoEffects =
+      | Readonly<{ type: "boot" }>
+      | Readonly<{ type: "save"; value: string }>;
+    type ClickedMsg = Extract<IslandMsg, { type: "clicked" }>;
+    const narrowUpdate = (model: IslandModel, message: ClickedMsg) => {
+      expect(message.type).toBe("clicked");
+      return [model, []] as const;
+    };
+    const narrowEffect = (
+      dispatch: (message: IslandMsg) => void,
+      effect: Extract<TwoEffects, { type: "boot" }>,
+    ) => {
+      expect(dispatch).toBeTypeOf("function");
+      expect(effect.type).toBe("boot");
+    };
+    const broadSubscriber: ProgramSubscriber<IslandMsg> = (dispatch) => {
+      dispatch({ type: "doubleClicked" });
+      return () => undefined;
+    };
+
+    // @ts-expect-error Update must accept every message in the program union.
+    const update: Runtime<IslandModel, IslandMsg, never>["update"] = narrowUpdate;
+    // @ts-expect-error Effect runner must accept every effect in the program union.
+    const runEffect: Runtime<IslandModel, IslandMsg, TwoEffects>["runEffect"] = narrowEffect;
+    // @ts-expect-error A broad subscriber can dispatch messages outside a narrow program.
+    const subscriber: ProgramSubscriber<ClickedMsg> = broadSubscriber;
+    // @ts-expect-error Program transitions reject low-level magic no-effect values.
+    const magicTransition: Transition<IslandModel, false> = [
+      { enabled: false, text: "", ticks: 0 },
+      [false],
+    ];
+
+    expect(update).toBe(narrowUpdate);
+    expect(runEffect).toBe(narrowEffect);
+    expect(subscriber).toBe(broadSubscriber);
+    expect(magicTransition[1]).toEqual([false]);
+  });
+
+  test("program facade omits low-level dispatch APIs", () => {
+    expect(program.start).toBe(start);
+    expect(program.mountIslands).toBe(mountIslands);
+    // @ts-expect-error Low-level app is intentionally absent from the program facade.
+    expect(program.app).toBeUndefined();
+    // @ts-expect-error Magic no-effect helper is intentionally absent from the program facade.
+    expect(program.noEffect).toBeUndefined();
   });
 
   test("mounts an effectless typed island from parsed flags", async () => {
@@ -520,7 +570,7 @@ describe("TEA island runtime", () => {
   test("provides generic browser subscriptions", async () => {
     const messages: Array<unknown> = [];
 
-    const stopEvery = every(10, () => "tick").subscribe((message) => {
+    const stopEvery = every(10, () => ({ type: "tick" })).subscribe((message) => {
       messages.push(message);
     });
     await vi.advanceTimersByTimeAsync(10);
@@ -540,7 +590,7 @@ describe("TEA island runtime", () => {
     stopKeys();
     stopInvalidKeys();
 
-    const stopResize = windowResized((viewport) => viewport).subscribe(
+    const stopResize = windowResized((viewport) => ({ type: "resized", viewport })).subscribe(
       (message) => {
         messages.push(message);
       },
@@ -549,10 +599,13 @@ describe("TEA island runtime", () => {
     stopResize();
 
     expect(messages).toEqual([
-      "tick",
+      { type: "tick" },
       { type: "keyPressed", key: "Enter" },
       { type: "keyPressed", key: 5 },
-      { width: globalThis.innerWidth, height: globalThis.innerHeight },
+      {
+        type: "resized",
+        viewport: { width: globalThis.innerWidth, height: globalThis.innerHeight },
+      },
     ]);
   });
 
