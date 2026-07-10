@@ -13,6 +13,7 @@ import {
   keyPressed,
   memo,
   noEffect,
+  noEffects,
   start,
   text,
   typedH,
@@ -178,6 +179,20 @@ describe("TEA island runtime", () => {
 
   type IslandEffect = Readonly<{ type: "boot" }>;
   const on = bindEvents<IslandMsg>();
+
+  test("requires a real runner when a program declares effects", () => {
+    type EffectRunner<Effect> = (
+      dispatch: (message: IslandMsg) => void,
+      effect: Effect,
+    ) => void;
+    const validRunner: EffectRunner<never> = noEffects;
+    // @ts-expect-error A never-effect runner cannot handle a declared effect.
+    const invalidRunner: EffectRunner<IslandEffect> = noEffects;
+
+    expect(validRunner).toBe(noEffects);
+    expect(noEffects(undefined, "unreachable" as never)).toBe("unreachable");
+    expect(invalidRunner).toBe(noEffects);
+  });
 
   test("starts with effects and dispatches event helper messages", async () => {
     const mount = appendMount("<form></form>");

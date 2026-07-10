@@ -238,6 +238,11 @@ export function noEffect<State>(): MaybeEffect<State> {
   return false;
 }
 
+export function noEffects(dispatch: unknown, effect: never): never {
+  void dispatch;
+  return effect;
+}
+
 export function text(value: unknown, node?: Node): TextVNode {
   return createVNode(String(value), emptyObject, emptyArray, textNodeType, node);
 }
