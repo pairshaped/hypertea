@@ -199,17 +199,72 @@ export type ProgramSubscription<Msg> = Readonly<{
   subscribe: ProgramSubscriber<Msg>;
 }>;
 
-export type Runtime<Model, Msg, ProgramEffect> = Readonly<{
+type RuntimeBase<Model, Msg, ProgramEffect> = Readonly<{
   init: () => Transition<Model, ProgramEffect>;
   update: (model: Model, message: Msg) => Transition<Model, ProgramEffect>;
   view: (model: Model) => VNode<Model>;
-  runEffect: (
-    dispatch: (message: Msg) => void,
-    effect: ProgramEffect,
-  ) => void | Promise<void>;
   subscriptions?: (model: Model) => ReadonlyArray<ProgramSubscription<Msg>>;
   node: Element;
 }>;
+
+type RuntimeEffects<Msg, ProgramEffect> = [ProgramEffect] extends [never]
+  ? Readonly<{ runEffect?: never }>
+  : Readonly<{
+      runEffect: (
+        dispatch: (message: Msg) => void,
+        effect: ProgramEffect,
+      ) => void | Promise<void>;
+    }>;
+
+export type Runtime<Model, Msg, ProgramEffect> = RuntimeBase<
+  Model,
+  Msg,
+  ProgramEffect
+> &
+  RuntimeEffects<Msg, ProgramEffect>;
+
+type IslandMountBase<Flags, Model, Msg, ProgramEffect> = Readonly<{
+  selector: string;
+  parseFlags: (value: unknown) => Flags;
+  init: (
+    flags: Flags,
+    node: HTMLElement,
+  ) => Transition<Model, ProgramEffect>;
+  update: (model: Model, message: Msg) => Transition<Model, ProgramEffect>;
+  view: (model: Model) => VNode<Model>;
+  subscriptions?: (
+    model: Model,
+    flags: Flags,
+    node: HTMLElement,
+  ) => ReadonlyArray<ProgramSubscription<Msg>>;
+}>;
+
+type EffectlessIslandMount<Flags, Model, Msg> = IslandMountBase<
+  Flags,
+  Model,
+  Msg,
+  never
+> &
+  Readonly<{ runEffect?: never }>;
+
+type EffectfulIslandMount<Flags, Model, Msg, ProgramEffect> = IslandMountBase<
+  Flags,
+  Model,
+  Msg,
+  ProgramEffect
+> &
+  Readonly<{
+    runEffect: (
+      dispatch: (message: Msg) => void,
+      effect: ProgramEffect,
+      flags: Flags,
+      node: HTMLElement,
+    ) => void | Promise<void>;
+  }>;
+
+export type IslandMount<Flags, Model, Msg, ProgramEffect> = [ProgramEffect] extends [never]
+  ? EffectlessIslandMount<Flags, Model, Msg>
+  : EffectfulIslandMount<Flags, Model, Msg, ProgramEffect>;
 
 type RunningSubscription<State> = readonly [
   subscriber: Subscriber<State>,
@@ -236,11 +291,6 @@ export function assertNever(value: never): never {
 
 export function noEffect<State>(): MaybeEffect<State> {
   return false;
-}
-
-export function noEffects(dispatch: unknown, effect: never): never {
-  void dispatch;
-  return effect;
 }
 
 export function text(value: unknown, node?: Node): TextVNode {
@@ -427,7 +477,11 @@ export function start<Model, Msg, ProgramEffect>(
     dispatch,
     effect,
   ) => {
-    return runtime.runEffect(
+    const runEffect = runtime.runEffect;
+    if (runEffect === undefined) {
+      throw new Error("Effectless programs cannot produce effects");
+    }
+    return runEffect(
       (message) => {
         dispatch(dispatchMessage, message);
       },
@@ -477,6 +531,65 @@ export function start<Model, Msg, ProgramEffect>(
           subscriptions: (model) => subscriptions(model).map(toSubscriptionTuple),
         },
   );
+}
+
+export function mountIslands<Flags, Model, Msg, ProgramEffect>(
+  options: EffectfulIslandMount<Flags, Model, Msg, ProgramEffect>,
+): void;
+export function mountIslands<Flags, Model, Msg>(
+  options: EffectlessIslandMount<Flags, Model, Msg>,
+): void;
+export function mountIslands<Flags, Model, Msg, ProgramEffect>(
+  options:
+    | EffectfulIslandMount<Flags, Model, Msg, ProgramEffect>
+    | EffectlessIslandMount<Flags, Model, Msg>,
+): void {
+  if (typeof globalThis.document === "undefined") {
+    return;
+  }
+
+  globalThis.document.querySelectorAll(options.selector).forEach((node) => {
+    if (!(node instanceof HTMLElement)) {
+      return;
+    }
+
+    try {
+      const rawFlags = node.dataset.flags;
+      if (rawFlags === undefined) {
+        throw new Error("Missing data-flags");
+      }
+      const flags = options.parseFlags(JSON.parse(rawFlags) as unknown);
+      const subscriptions = options.subscriptions;
+      const runEffect = options.runEffect;
+      const runtime = {
+        init: () => options.init(flags, node),
+        update: options.update,
+        view: options.view,
+        ...(subscriptions === undefined
+          ? {}
+          : { subscriptions: (model: Model) => subscriptions(model, flags, node) }),
+        ...(runEffect === undefined
+          ? {}
+          : {
+              runEffect: (dispatch: (message: Msg) => void, effect: ProgramEffect) =>
+                runEffect(dispatch, effect, flags, node),
+            }),
+        node,
+        // Conditional generics lose their exact optional-property relationships here.
+      } as unknown as Runtime<Model, Msg, ProgramEffect>;
+      start(runtime);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "Unknown flags error";
+      globalThis.console.error(`Unable to mount island ${options.selector}: ${detail}`);
+      const alert = globalThis.document.createElement("div");
+      alert.className = "alert-destructive";
+      alert.dataset.islandError = "";
+      alert.setAttribute("role", "alert");
+      alert.setAttribute("title", detail);
+      alert.textContent = "This section could not be loaded.";
+      node.replaceChildren(alert);
+    }
+  });
 }
 
 export function app<State>({

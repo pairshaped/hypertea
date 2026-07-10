@@ -12,8 +12,8 @@ import {
   inputChanged,
   keyPressed,
   memo,
+  mountIslands,
   noEffect,
-  noEffects,
   start,
   text,
   typedH,
@@ -25,6 +25,7 @@ import {
   type MemoView,
   type Runtime,
   type Subscriber,
+  type Transition,
   type TypedH,
   type VNode,
 } from "./index.js";
@@ -180,18 +181,167 @@ describe("TEA island runtime", () => {
   type IslandEffect = Readonly<{ type: "boot" }>;
   const on = bindEvents<IslandMsg>();
 
-  test("requires a real runner when a program declares effects", () => {
-    type EffectRunner<Effect> = (
-      dispatch: (message: IslandMsg) => void,
-      effect: Effect,
-    ) => void;
-    const validRunner: EffectRunner<never> = noEffects;
-    // @ts-expect-error A never-effect runner cannot handle a declared effect.
-    const invalidRunner: EffectRunner<IslandEffect> = noEffects;
+  test("requires a runner only when a program declares effects", () => {
+    const effectless: Pick<Runtime<IslandModel, IslandMsg, never>, "runEffect"> = {};
+    // @ts-expect-error Effectful programs must provide a runner.
+    const missingRunner: Pick<Runtime<IslandModel, IslandMsg, IslandEffect>, "runEffect"> = {};
 
-    expect(validRunner).toBe(noEffects);
-    expect(noEffects(undefined, "unreachable" as never)).toBe("unreachable");
-    expect(invalidRunner).toBe(noEffects);
+    expect(effectless).toEqual({});
+    expect(missingRunner).toEqual({});
+  });
+
+  test("mounts an effectless typed island from parsed flags", async () => {
+    type TinyModel = Readonly<{ label: string }>;
+    type TinyMsg = Readonly<{ type: "clicked" }>;
+    const mount = appendMount("<div data-tiny-island data-flags='{\"label\":\"ready\"}'></div>");
+    const events = bindEvents<TinyMsg>();
+
+    mountIslands({
+      selector: "[data-tiny-island]",
+      parseFlags: parseTinyFlags,
+      init: (flags) => [flags, []],
+      update: (model: TinyModel, message: TinyMsg) => [
+        { ...model, label: message.type },
+        [],
+      ],
+      view: (model: TinyModel) =>
+        h("button", { onClick: events.clicked({ type: "clicked" }) }, model.label),
+    });
+    await flushRender();
+
+    const button = requireElement("button");
+    expect(button.textContent).toBe("ready");
+    button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flushRender();
+    expect(button.textContent).toBe("clicked");
+    expect(mount.querySelector("[data-island-error]")).toBeNull();
+  });
+
+  test("renders a diagnosable error when island flags are invalid", () => {
+    const mount = appendMount("<div data-tiny-island data-flags='{}'></div>");
+    const error = vi.spyOn(globalThis.console, "error").mockImplementation(() => undefined);
+
+    mountIslands({
+      selector: "[data-tiny-island]",
+      parseFlags: parseTinyFlags,
+      init: (flags) => [flags, []],
+      update: (model: Readonly<{ label: string }>) => [model, []],
+      view: (model: Readonly<{ label: string }>) => h("span", {}, model.label),
+    });
+
+    const alert = requireElement("[data-island-error]");
+    expect(alert.getAttribute("role")).toBe("alert");
+    expect(alert.getAttribute("title")).toBe("Expected label");
+    expect(alert.textContent).toBe("This section could not be loaded.");
+    expect(error).toHaveBeenCalledWith(
+      "Unable to mount island [data-tiny-island]: Expected label",
+    );
+    expect(mount.contains(alert)).toBe(true);
+  });
+
+  test("reports missing island flags", () => {
+    appendMount("<div data-tiny-island></div>");
+    vi.spyOn(globalThis.console, "error").mockImplementation(() => undefined);
+
+    mountIslands({
+      selector: "[data-tiny-island]",
+      parseFlags: parseTinyFlags,
+      init: (flags) => [flags, []],
+      update: (model: Readonly<{ label: string }>) => [model, []],
+      view: (model: Readonly<{ label: string }>) => h("span", {}, model.label),
+    });
+
+    expect(requireElement("[data-island-error]").getAttribute("title")).toBe(
+      "Missing data-flags",
+    );
+  });
+
+  test("handles non-Error parser failures", () => {
+    appendMount("<div data-tiny-island data-flags='{}'></div>");
+    vi.spyOn(globalThis.console, "error").mockImplementation(() => undefined);
+
+    mountIslands({
+      selector: "[data-tiny-island]",
+      parseFlags: () => {
+        // eslint-disable-next-line @typescript-eslint/only-throw-error -- Third-party parsers can throw unknown values.
+        throw "invalid";
+      },
+      init: (flags: Readonly<{ label: string }>) => [flags, []],
+      update: (model: Readonly<{ label: string }>) => [model, []],
+      view: (model: Readonly<{ label: string }>) => h("span", {}, model.label),
+    });
+
+    expect(requireElement("[data-island-error]").getAttribute("title")).toBe(
+      "Unknown flags error",
+    );
+  });
+
+  test("does nothing without a document or for non-HTML selector matches", () => {
+    vi.stubGlobal("document", undefined);
+    expect(() => {
+      mountIslands({
+        selector: "[data-tiny-island]",
+        parseFlags: parseTinyFlags,
+        init: (flags) => [flags, []],
+        update: (model: Readonly<{ label: string }>) => [model, []],
+        view: (model: Readonly<{ label: string }>) => h("span", {}, model.label),
+      });
+    }).not.toThrow();
+    vi.unstubAllGlobals();
+
+    globalThis.document.body.innerHTML =
+      "<svg data-tiny-island data-flags='{\"label\":\"ignored\"}'></svg>";
+    mountIslands({
+      selector: "[data-tiny-island]",
+      parseFlags: parseTinyFlags,
+      init: (flags) => [flags, []],
+      update: (model: Readonly<{ label: string }>) => [model, []],
+      view: (model: Readonly<{ label: string }>) => h("span", {}, model.label),
+    });
+
+    expect(globalThis.document.querySelector("svg")?.childNodes).toHaveLength(0);
+  });
+
+  test("forwards mount context to effects and subscriptions", async () => {
+    type ContextModel = Readonly<{ label: string }>;
+    type ContextMsg = Readonly<{ type: "setLabel"; label: string }>;
+    type ContextEffect = Readonly<{ type: "boot" }>;
+    const mount = appendMount("<div data-context-island data-flags='{\"label\":\"ready\"}'></div>");
+    const seen: Array<string> = [];
+
+    mountIslands({
+      selector: "[data-context-island]",
+      parseFlags: parseTinyFlags,
+      init: (flags): Transition<ContextModel, ContextEffect> => [flags, [{ type: "boot" }]],
+      update: (model: ContextModel, message: ContextMsg) => [
+        { ...model, label: message.label },
+        [],
+      ],
+      view: (model: ContextModel) => h("span", {}, model.label),
+      runEffect: (dispatch, effect, flags, node) => {
+        seen.push(effect.type, flags.label, node === mount ? "effect-node" : "wrong-node");
+        dispatch({ type: "setLabel", label: "effect" });
+      },
+      subscriptions: (_model, flags, node) => [
+        {
+          key: "context",
+          subscribe: () => {
+            seen.push(flags.label, node === mount ? "subscription-node" : "wrong-node");
+            return vi.fn();
+          },
+        },
+      ],
+    });
+    await flushRender();
+
+    expect(seen).toEqual([
+      "ready",
+      "subscription-node",
+      "boot",
+      "ready",
+      "effect-node",
+    ]);
+    expect(requireElement("span").textContent).toBe("effect");
   });
 
   test("starts with effects and dispatches event helper messages", async () => {
@@ -292,6 +442,22 @@ describe("TEA island runtime", () => {
     expect(() => h("button", { onClick: clicked({ type: "clicked" }) })).toThrow(
       "Event helpers can only be used while rendering a view",
     );
+  });
+
+  test("rejects effects returned by an effectless program at runtime", () => {
+    const mount = appendMount("<span></span>");
+
+    expect(() => {
+      start<IslandModel, IslandMsg, never>({
+        node: mount,
+        init: () => [
+          { enabled: false, text: "", ticks: 0 },
+          ["invalid effect" as never],
+        ],
+        update: (model) => [model, []],
+        view: () => h("span"),
+      });
+    }).toThrow("Effectless programs cannot produce effects");
   });
 
   test("reads input helper values from form controls and fallbacks", () => {
@@ -417,7 +583,6 @@ describe("TEA island runtime", () => {
         }
       },
       view: (model) => h("span", {}, String(model.ticks)),
-      runEffect: () => undefined,
       subscriptions: () => [subscription],
     });
 
@@ -1130,6 +1295,18 @@ function appendMount(markup: string): Element {
   }
 
   return mount;
+}
+
+function parseTinyFlags(value: unknown): Readonly<{ label: string }> {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    !("label" in value) ||
+    typeof value.label !== "string"
+  ) {
+    throw new Error("Expected label");
+  }
+  return { label: value.label };
 }
 
 function requireElement(selector: string): Element {

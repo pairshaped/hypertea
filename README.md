@@ -19,6 +19,7 @@ This is not meant to become a broad SPA framework. It exists for small interacti
 The runtime has two layers:
 
 - `start()` for Elm-like island programs with `Model`, `Msg`, `Effect`, `init`, `update`, `view`, and `subscriptions`
+- `mountIslands()` for scanning server-rendered mounts, parsing flags, and starting typed programs
 - `h()` and `fragment()` for TSX-friendly element VNodes
 - package-provided JSX types for TSX islands
 - `text()` for text VNodes
@@ -65,27 +66,29 @@ npm run bench
 
 ## API Shape
 
-Application islands should use `start()`:
+Server-rendered application islands should use `mountIslands()`:
 
 ```ts
-import { bindEvents, h, start, type Runtime, type VNode } from "@pairshaped/hypertea"
+import { bindEvents, h, mountIslands, type VNode } from "@pairshaped/hypertea"
 
 type Model = {
   readonly count: number
 }
 
 type Msg = { readonly type: "increment" }
-type Effect = never
 const on = bindEvents<Msg>()
 
-const node = document.querySelector("#counter")
-
-if (node === null) {
-  throw new Error("Missing #counter mount node")
+function parseFlags(value: unknown): Model {
+  if (typeof value !== "object" || value === null || !("count" in value) || typeof value.count !== "number") {
+    throw new Error("Expected count")
+  }
+  return { count: value.count }
 }
 
-const runtime: Runtime<Model, Msg, Effect> = {
-  init: () => [{ count: 0 }, []],
+mountIslands({
+  selector: "[data-counter]",
+  parseFlags,
+  init: (flags) => [flags, []],
   update: (model, message) => {
     switch (message.type) {
       case "increment":
@@ -94,14 +97,12 @@ const runtime: Runtime<Model, Msg, Effect> = {
   },
   view: (model): VNode<Model> =>
     h("button", { onClick: on.clicked({ type: "increment" }) }, String(model.count)),
-  runEffect: () => undefined,
-  node,
-}
-
-start(runtime)
+})
 ```
 
-`update` returns `[model, effects]`. Effects and subscriptions are managed by the runtime so ordinary island code can stay focused on state transitions.
+`update` returns `[model, effects]`. Effectless programs omit `runEffect`; declaring a real effect type makes the runner required. Invalid or missing flags render a visible mount error and produce a console diagnostic.
+
+Use `start()` directly when the host application already owns mount discovery or needs custom startup behavior.
 
 The lower-level `app()` API remains available for runtime internals and benchmarks. Application code should prefer `start()`.
 
