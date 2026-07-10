@@ -169,6 +169,17 @@ export type EventBinding<Msg> = Readonly<{
   toMsg: (event: Event) => Msg;
 }>;
 
+export type BoundEvents<Msg> = Readonly<{
+  changed: (message: Msg) => EventBinding<Msg>;
+  checkedChanged: (toMessage: (value: boolean) => Msg) => EventBinding<Msg>;
+  clicked: (message: Msg) => EventBinding<Msg>;
+  dragEnded: (message: Msg) => EventBinding<Msg>;
+  dragEntered: (message: Msg) => EventBinding<Msg>;
+  dragStarted: (message: Msg) => EventBinding<Msg>;
+  inputChanged: (toMessage: (value: string) => Msg) => EventBinding<Msg>;
+  submitted: (message: Msg) => EventBinding<Msg>;
+}>;
+
 export type Viewport = Readonly<{
   width: number;
   height: number;
@@ -287,6 +298,19 @@ export function memo<State, Data extends Indexable>(
     type: elementNodeType,
     node: undefined,
     memo: data,
+  };
+}
+
+export function bindEvents<Msg>(): BoundEvents<Msg> {
+  return {
+    changed,
+    checkedChanged,
+    clicked,
+    dragEnded,
+    dragEntered,
+    dragStarted,
+    inputChanged,
+    submitted,
   };
 }
 

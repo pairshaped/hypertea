@@ -3,12 +3,9 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import {
   app,
   assertNever,
-  changed,
+  bindEvents,
   checkedChanged,
   clicked,
-  dragEnded,
-  dragEntered,
-  dragStarted,
   every,
   fragment,
   h,
@@ -17,7 +14,6 @@ import {
   memo,
   noEffect,
   start,
-  submitted,
   text,
   typedH,
   windowResized,
@@ -174,12 +170,14 @@ describe("TEA island runtime", () => {
 
   type IslandMsg =
     | Readonly<{ type: "clicked" }>
+    | Readonly<{ type: "doubleClicked" }>
     | Readonly<{ type: "changed"; value: string }>
     | Readonly<{ type: "checked"; value: boolean }>
     | Readonly<{ type: "submitted" }>
     | Readonly<{ type: "tick" }>;
 
   type IslandEffect = Readonly<{ type: "boot" }>;
+  const on = bindEvents<IslandMsg>();
 
   test("starts with effects and dispatches event helper messages", async () => {
     const mount = appendMount("<form></form>");
@@ -207,22 +205,22 @@ describe("TEA island runtime", () => {
         }
       },
       view: (model) =>
-        h("form", { onSubmit: submitted({ type: "submitted" }) }, [
-          h("button", { onClick: clicked({ type: "clicked" }), type: "button" }, [
+        h("form", { onSubmit: on.submitted({ type: "submitted" }) }, [
+          h("button", { onClick: on.clicked({ type: "clicked" }), type: "button" }, [
             model.text,
           ]),
           h(
             "button",
-            { onDblClick: clicked({ type: "doubleClicked" }), type: "button" },
+            { onDblClick: on.clicked({ type: "doubleClicked" }), type: "button" },
             ["double"],
           ),
           h("input", {
             checked: model.enabled,
-            onChange: checkedChanged((value) => ({ type: "checked", value })),
+            onChange: on.checkedChanged((value) => ({ type: "checked", value })),
             type: "checkbox",
           }),
           h("textarea", {
-            onInput: inputChanged((value) => ({ type: "changed", value })),
+            onInput: on.inputChanged((value) => ({ type: "changed", value })),
             value: model.text,
           }),
           h("span", {}, String(model.ticks)),
@@ -307,11 +305,35 @@ describe("TEA island runtime", () => {
   });
 
   test("creates simple message event bindings", () => {
-    expect(changed("change").toMsg(new Event("change"))).toBe("change");
-    expect(clicked("click").toMsg(new Event("click"))).toBe("click");
-    expect(dragStarted("start").toMsg(new Event("dragstart"))).toBe("start");
-    expect(dragEntered("enter").toMsg(new Event("dragenter"))).toBe("enter");
-    expect(dragEnded("end").toMsg(new Event("dragend"))).toBe("end");
+    type Msg =
+      | Readonly<{ type: "change" }>
+      | Readonly<{ type: "click" }>
+      | Readonly<{ type: "dragEnd" }>
+      | Readonly<{ type: "dragEnter" }>
+      | Readonly<{ type: "dragStart" }>
+      | Readonly<{ type: "input"; value: string }>;
+    const events = bindEvents<Msg>();
+
+    expect(events.changed({ type: "change" }).toMsg(new Event("change"))).toEqual({
+      type: "change",
+    });
+    expect(events.clicked({ type: "click" }).toMsg(new Event("click"))).toEqual({
+      type: "click",
+    });
+    expect(events.dragStarted({ type: "dragStart" }).toMsg(new Event("dragstart"))).toEqual({
+      type: "dragStart",
+    });
+    expect(events.dragEntered({ type: "dragEnter" }).toMsg(new Event("dragenter"))).toEqual({
+      type: "dragEnter",
+    });
+    expect(events.dragEnded({ type: "dragEnd" }).toMsg(new Event("dragend"))).toEqual({
+      type: "dragEnd",
+    });
+
+    // @ts-expect-error Unknown message tags must fail at the view event boundary.
+    events.clicked({ type: "missing" });
+    // @ts-expect-error Message payloads must match the program's declared union.
+    events.inputChanged((value) => ({ type: "input", value: value.length }));
   });
 
   test("provides generic browser subscriptions", async () => {
@@ -324,11 +346,18 @@ describe("TEA island runtime", () => {
     stopEvery();
     await vi.advanceTimersByTimeAsync(10);
 
-    const stopKeys = keyPressed((key) => ({ key })).subscribe((message) => {
+    type KeyboardMsg = Readonly<{ type: "keyPressed"; key: string }>;
+    const stopKeys = keyPressed<KeyboardMsg>((key) => ({ type: "keyPressed", key })).subscribe((message) => {
+      messages.push(message);
+    });
+    // @ts-expect-error Keyboard subscription payloads must match the program's message type.
+    const invalidKeySubscription = keyPressed<KeyboardMsg>((key) => ({ type: "keyPressed", key: key.length }));
+    const stopInvalidKeys = invalidKeySubscription.subscribe((message) => {
       messages.push(message);
     });
     globalThis.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" }));
     stopKeys();
+    stopInvalidKeys();
 
     const stopResize = windowResized((viewport) => viewport).subscribe(
       (message) => {
@@ -340,7 +369,8 @@ describe("TEA island runtime", () => {
 
     expect(messages).toEqual([
       "tick",
-      { key: "Enter" },
+      { type: "keyPressed", key: "Enter" },
+      { type: "keyPressed", key: 5 },
       { width: globalThis.innerWidth, height: globalThis.innerHeight },
     ]);
   });
@@ -364,6 +394,7 @@ describe("TEA island runtime", () => {
           case "tick":
             return [{ ...model, ticks: model.ticks + 1 }, []];
           case "clicked":
+          case "doubleClicked":
           case "changed":
           case "checked":
           case "submitted":

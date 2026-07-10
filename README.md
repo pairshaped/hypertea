@@ -23,7 +23,7 @@ The runtime has two layers:
 - package-provided JSX types for TSX islands
 - `text()` for text VNodes
 - `memo()` for memoized view islands
-- event helpers such as `clicked`, `inputChanged`, `checkedChanged`, and `submitted`
+- program-bound event helpers such as `clicked`, `inputChanged`, `checkedChanged`, and `submitted`
 - browser subscription helpers such as `every`, `keyPressed`, and `windowResized`
 - lower-level `app()` support for the small Hyperapp-shaped runtime underneath
 - keyed DOM patching
@@ -68,7 +68,7 @@ npm run bench
 Application islands should use `start()`:
 
 ```ts
-import { clicked, h, start, type Runtime, type VNode } from "@pairshaped/hypertea"
+import { bindEvents, h, start, type Runtime, type VNode } from "@pairshaped/hypertea"
 
 type Model = {
   readonly count: number
@@ -76,6 +76,7 @@ type Model = {
 
 type Msg = { readonly type: "increment" }
 type Effect = never
+const on = bindEvents<Msg>()
 
 const node = document.querySelector("#counter")
 
@@ -92,7 +93,7 @@ const runtime: Runtime<Model, Msg, Effect> = {
     }
   },
   view: (model): VNode<Model> =>
-    h("button", { onClick: clicked({ type: "increment" }) }, String(model.count)),
+    h("button", { onClick: on.clicked({ type: "increment" }) }, String(model.count)),
   runEffect: () => undefined,
   node,
 }
