@@ -6,9 +6,11 @@ Accepted
 
 ## Decision
 
-Hypertea lives as a standalone TypeScript project at `/Users/daverapin/projects/ts/hypertea`.
+Hypertea lives as an independent package inside the private Sports monorepo at
+`packages/hypertea`.
 
-Host applications can consume it through a local package link while the API is still forming. A git submodule is not the default integration mechanism.
+Host applications consume it through the root npm workspace while the interface
+is still forming. A git submodule is not the integration mechanism.
 
 ## Package Shape
 
@@ -23,4 +25,6 @@ Source code lives in `src/`. Tests may live next to source files when that impro
 Applications should depend on Hypertea through normal package tooling. They
 should not copy runtime source files or JSX declarations into the app.
 
-While the package is private, local development can use a `file:` dependency or package link. Publishing can be considered later if more projects need it.
+The canonical package remains private. It may be exported with filtered history
+to a public showcase repository without making that repository a second source
+of truth.
