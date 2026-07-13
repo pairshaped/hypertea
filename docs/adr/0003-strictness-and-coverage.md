@@ -40,6 +40,28 @@ ESLint should reject unmanaged side effects in ordinary source files. Restricted
 
 Approved runtime effect and subscription modules may touch those APIs. Application code should request managed effects instead.
 
+Hypertea exposes `hyperteaPurity()` from `@pairshaped/hypertea/eslint` so
+applications can apply the same restriction to ordinary helper and domain
+modules. Applications pass the files covered by the boundary and an explicit
+`effectFiles` exception list. Each exception is an effect adapter or integration
+entry point whose side effects are intentional and documented beside the lint
+configuration.
+
+An application entry module may receive a small documented `allowedGlobals`
+list when it owns mount or effect-runner plumbing. The exception applies only to
+that file group. Application-specific syntax restrictions are appended through
+`extraRestrictedSyntax` so flat config merging cannot silently replace the
+shared side-effect selectors.
+
+The shared rule covers direct globals, common `globalThis` access, DOM event
+listeners, wall-clock time, and randomness. A narrow inline disable is allowed
+when it includes a concrete reason. Broad directory-level disables are not part
+of the design.
+
+This lint boundary does not perform call-graph analysis or prove third-party
+code pure. Its job is to make accidental unmanaged effects difficult and make
+intentional exceptions visible during review.
+
 Strict TypeScript ESLint rules should also require explicit promise handling, explicit boolean checks, readonly-friendly code, and type-safe control flow.
 
 ## Exhaustiveness

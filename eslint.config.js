@@ -1,27 +1,19 @@
 import js from "@eslint/js";
 import tseslint from "typescript-eslint";
 
-const sideEffectGlobals = [
-  "fetch",
-  "setTimeout",
-  "setInterval",
-  "clearTimeout",
-  "clearInterval",
-  "document",
-  "window",
-  "localStorage",
-  "sessionStorage",
-  "crypto",
-];
+import { hyperteaPurity } from "./eslint-purity.js";
+
+const typedFiles = ["src/**/*.ts"];
 
 export default tseslint.config(
   {
     ignores: ["benchmark/", "coverage/", "dist/", "node_modules/", "eslint.config.js"],
   },
   js.configs.recommended,
-  ...tseslint.configs.strictTypeChecked,
-  ...tseslint.configs.stylisticTypeChecked,
+  ...tseslint.configs.strictTypeChecked.map((config) => ({ ...config, files: typedFiles })),
+  ...tseslint.configs.stylisticTypeChecked.map((config) => ({ ...config, files: typedFiles })),
   {
+    files: typedFiles,
     languageOptions: {
       parserOptions: {
         projectService: true,
@@ -37,13 +29,9 @@ export default tseslint.config(
       "@typescript-eslint/no-unnecessary-condition": "error",
       "@typescript-eslint/prefer-readonly": "error",
       "@typescript-eslint/strict-boolean-expressions": "error",
-      "no-restricted-globals": [
-        "error",
-        ...sideEffectGlobals.map((name) => ({
-          name,
-          message: `${name} is managed by Hypertea effects or subscriptions.`,
-        })),
-      ],
     },
   },
+  // program.ts is the pure public facade. index.ts owns the runtime's browser
+  // effects, so it is intentionally outside the application purity boundary.
+  ...hyperteaPurity({ files: ["src/program.ts"] }),
 );

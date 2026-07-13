@@ -14,10 +14,16 @@
     "./program": {
       "types": "./dist/program.d.ts",
       "import": "./dist/program.js"
+    },
+    "./eslint": {
+      "types": "./eslint-purity.d.ts",
+      "import": "./eslint-purity.js"
     }
   },
   "files": [
     "dist",
+    "eslint-purity.d.ts",
+    "eslint-purity.js",
     "README.md"
   ],
   "scripts": {

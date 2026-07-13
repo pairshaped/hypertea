@@ -49,6 +49,46 @@ The ESLint config is part of the runtime design. It exists to make TypeScript ap
 
 Approved effect and subscription modules are where browser, network, time, storage, and DOM APIs belong.
 
+### Make unmanaged effects explicit
+
+Hypertea exports a flat ESLint config for application modules that should not
+touch browser state directly:
+
+```js
+import { hyperteaPurity } from "@pairshaped/hypertea/eslint";
+
+export default [
+  ...hyperteaPurity({
+    files: ["src/islands/**/*.ts", "src/pages/**/*.ts"],
+    effectFiles: [
+      "src/islands/runtime.ts",
+      "src/islands/sortable_list.ts",
+    ],
+  }),
+];
+```
+
+The config rejects raw DOM, network, storage, timer, randomness, wall-clock,
+listener, and logging APIs in ordinary matched files. This catches a common
+hole where `update` calls an imported helper and that helper performs an
+unmanaged effect.
+
+`effectFiles` is the reviewable exception list. Put real effect adapters there
+and explain each application-specific entry next to the config. For a genuinely
+local exception, use a one-line ESLint disable with a reason. Do not disable the
+rule for a directory just to get a build through.
+
+If an entry module deliberately owns limited browser plumbing, give that file
+group a separate `hyperteaPurity()` entry with an `allowedGlobals` list. Keep the
+list short and explain it beside the config. `extraRestrictedSyntax` lets an
+application append its mutation, assertion, or JSX restrictions without
+replacing Hypertea's side-effect selectors in flat ESLint config.
+
+This is a guardrail, not an effect type system. It does not inspect third-party
+packages, follow arbitrary call graphs, or prove that every function is pure.
+Island entry modules may still own mount and `runEffect` plumbing when splitting
+those into separate files would only add ceremony.
+
 ## Commands
 
 ```sh
