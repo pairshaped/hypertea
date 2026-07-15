@@ -7,6 +7,7 @@ import {
   bindEvents,
   checkedChanged,
   clicked,
+  defineProgram,
   every,
   fragment,
   h,
@@ -14,6 +15,7 @@ import {
   keyPressed,
   memo,
   mountIslands,
+  mountProgram,
   noEffect,
   start,
   text,
@@ -234,6 +236,8 @@ describe("TEA island runtime", () => {
   test("program facade omits low-level dispatch APIs", () => {
     expect(program.start).toBe(start);
     expect(program.mountIslands).toBe(mountIslands);
+    expect(program.mountProgram).toBe(mountProgram);
+    expect(program.defineProgram).toBe(defineProgram);
     // @ts-expect-error Low-level app is intentionally absent from the program facade.
     expect(program.app).toBeUndefined();
     // @ts-expect-error Magic no-effect helper is intentionally absent from the program facade.
@@ -241,21 +245,12 @@ describe("TEA island runtime", () => {
   });
 
   test("mounts an effectless typed island from parsed flags", async () => {
-    type TinyModel = Readonly<{ label: string }>;
-    type TinyMsg = Readonly<{ type: "clicked" }>;
     const mount = appendMount("<div data-tiny-island data-flags='{\"label\":\"ready\"}'></div>");
-    const events = bindEvents<TinyMsg>();
 
     mountIslands({
       selector: "[data-tiny-island]",
       parseFlags: parseTinyFlags,
-      init: (flags) => [flags, []],
-      update: (model: TinyModel, message: TinyMsg) => [
-        { ...model, label: message.type },
-        [],
-      ],
-      view: (model: TinyModel) =>
-        h("button", { onClick: events.clicked({ type: "clicked" }) }, model.label),
+      program: tinyProgram(),
     });
     await flushRender();
 
@@ -267,6 +262,74 @@ describe("TEA island runtime", () => {
     expect(mount.querySelector("[data-island-error]")).toBeNull();
   });
 
+  test("mounts one canonical program with host effects and subscriptions", async () => {
+    type Flags = Readonly<{ label: string }>;
+    type Model = Readonly<{ label: string }>;
+    type Msg = Readonly<{ type: "setLabel"; label: string }>;
+    type Effect = Readonly<{ type: "boot" }>;
+    const mount = appendMount("<span></span>") as HTMLElement;
+    const unsubscribe = vi.fn();
+    const seen: Array<string> = [];
+    const canonical = defineProgram<Flags, Model, Msg, Effect>({
+      init: (flags) => [flags, [{ type: "boot" }]],
+      update: (_model, message) => [{ label: message.label }, []],
+      view: (model) => h("span", {}, model.label),
+      subscriptions: (_model, context) => [{
+        key: "context",
+        subscribe: () => {
+          seen.push(context.flags.label, context.node === mount ? "node" : "wrong");
+          return unsubscribe;
+        },
+      }],
+    });
+
+    const handle = mountProgram({
+      flags: { label: "ready" },
+      node: mount,
+      program: canonical,
+      runEffect: (dispatch, effect, context) => {
+        seen.push(effect.type, context.flags.label);
+        dispatch({ type: "setLabel", label: "started" });
+      },
+    });
+    await flushRender();
+    await handle.settle();
+
+    expect(handle.model()).toEqual({ label: "started" });
+    expect(requireElement("span").textContent).toBe("started");
+    expect(seen).toEqual(["ready", "node", "boot", "ready"]);
+
+    handle.stop();
+    expect(unsubscribe).toHaveBeenCalledOnce();
+  });
+
+  test("mounts an effectless canonical program without subscriptions", async () => {
+    type Msg = Readonly<{ type: "setLabel"; label: string }>;
+    const mount = appendMount("<span></span>") as HTMLElement;
+    const canonical = defineProgram<
+      Readonly<{ label: string }>,
+      Readonly<{ label: string }>,
+      Msg,
+      never
+    >({
+      init: (flags) => [flags, []],
+      update: (_model, message) => [{ label: message.label }, []],
+      view: (model) => h("span", {}, model.label),
+    });
+    const handle = mountProgram({
+      flags: { label: "ready" },
+      node: mount,
+      program: canonical,
+    });
+
+    handle.dispatch({ type: "setLabel", label: "changed" });
+    await flushRender();
+    await handle.settle();
+
+    expect(handle.model()).toEqual({ label: "changed" });
+    expect(requireElement("span").textContent).toBe("changed");
+  });
+
   test("renders a diagnosable error when island flags are invalid", () => {
     const mount = appendMount("<div data-tiny-island data-flags='{}'></div>");
     const error = vi.spyOn(globalThis.console, "error").mockImplementation(() => undefined);
@@ -274,9 +337,7 @@ describe("TEA island runtime", () => {
     mountIslands({
       selector: "[data-tiny-island]",
       parseFlags: parseTinyFlags,
-      init: (flags) => [flags, []],
-      update: (model: Readonly<{ label: string }>) => [model, []],
-      view: (model: Readonly<{ label: string }>) => h("span", {}, model.label),
+      program: tinyProgram(),
     });
 
     const alert = requireElement("[data-island-error]");
@@ -296,9 +357,7 @@ describe("TEA island runtime", () => {
     mountIslands({
       selector: "[data-tiny-island]",
       parseFlags: parseTinyFlags,
-      init: (flags) => [flags, []],
-      update: (model: Readonly<{ label: string }>) => [model, []],
-      view: (model: Readonly<{ label: string }>) => h("span", {}, model.label),
+      program: tinyProgram(),
     });
 
     expect(requireElement("[data-island-error]").getAttribute("title")).toBe(
@@ -316,9 +375,7 @@ describe("TEA island runtime", () => {
         // eslint-disable-next-line @typescript-eslint/only-throw-error -- Third-party parsers can throw unknown values.
         throw "invalid";
       },
-      init: (flags: Readonly<{ label: string }>) => [flags, []],
-      update: (model: Readonly<{ label: string }>) => [model, []],
-      view: (model: Readonly<{ label: string }>) => h("span", {}, model.label),
+      program: tinyProgram(),
     });
 
     expect(requireElement("[data-island-error]").getAttribute("title")).toBe(
@@ -332,9 +389,7 @@ describe("TEA island runtime", () => {
       mountIslands({
         selector: "[data-tiny-island]",
         parseFlags: parseTinyFlags,
-        init: (flags) => [flags, []],
-        update: (model: Readonly<{ label: string }>) => [model, []],
-        view: (model: Readonly<{ label: string }>) => h("span", {}, model.label),
+        program: tinyProgram(),
       });
     }).not.toThrow();
     vi.unstubAllGlobals();
@@ -344,9 +399,7 @@ describe("TEA island runtime", () => {
     mountIslands({
       selector: "[data-tiny-island]",
       parseFlags: parseTinyFlags,
-      init: (flags) => [flags, []],
-      update: (model: Readonly<{ label: string }>) => [model, []],
-      view: (model: Readonly<{ label: string }>) => h("span", {}, model.label),
+      program: tinyProgram(),
     });
 
     expect(globalThis.document.querySelector("svg")?.childNodes).toHaveLength(0);
@@ -362,25 +415,39 @@ describe("TEA island runtime", () => {
     mountIslands({
       selector: "[data-context-island]",
       parseFlags: parseTinyFlags,
-      init: (flags): Transition<ContextModel, ContextEffect> => [flags, [{ type: "boot" }]],
-      update: (model: ContextModel, message: ContextMsg) => [
-        { ...model, label: message.label },
-        [],
-      ],
-      view: (model: ContextModel) => h("span", {}, model.label),
-      runEffect: (dispatch, effect, flags, node) => {
-        seen.push(effect.type, flags.label, node === mount ? "effect-node" : "wrong-node");
+      program: defineProgram<
+        Readonly<{ label: string }>,
+        ContextModel,
+        ContextMsg,
+        ContextEffect
+      >({
+        init: (flags): Transition<ContextModel, ContextEffect> => [flags, [{ type: "boot" }]],
+        update: (model, message) => [
+          { ...model, label: message.label },
+          [],
+        ],
+        view: (model) => h("span", {}, model.label),
+        subscriptions: (_model, context) => [
+          {
+            key: "context",
+            subscribe: () => {
+              seen.push(
+                context.flags.label,
+                context.node === mount ? "subscription-node" : "wrong-node",
+              );
+              return vi.fn();
+            },
+          },
+        ],
+      }),
+      runEffect: (dispatch, effect, context) => {
+        seen.push(
+          effect.type,
+          context.flags.label,
+          context.node === mount ? "effect-node" : "wrong-node",
+        );
         dispatch({ type: "setLabel", label: "effect" });
       },
-      subscriptions: (_model, flags, node) => [
-        {
-          key: "context",
-          subscribe: () => {
-            seen.push(flags.label, node === mount ? "subscription-node" : "wrong-node");
-            return vi.fn();
-          },
-        },
-      ],
     });
     await flushRender();
 
@@ -644,6 +711,47 @@ describe("TEA island runtime", () => {
     await flushRender();
 
     expect(requireElement("span").textContent).toBe("1");
+  });
+
+  test("exposes model, dispatch, settlement, and idempotent cleanup", async () => {
+    const mount = appendMount("<span></span>");
+    const unsubscribe = vi.fn();
+    let dispatchTick: ((message: IslandMsg) => void) | undefined;
+    const handle = start<IslandModel, IslandMsg, never>({
+      node: mount,
+      init: () => [{ enabled: false, text: "", ticks: 0 }, []],
+      update: (model, message) =>
+        message.type === "tick"
+          ? [{ ...model, ticks: model.ticks + 1 }, []]
+          : [model, []],
+      view: (model) => h("span", {}, String(model.ticks)),
+      subscriptions: () => [{
+        key: "tick",
+        subscribe: (dispatch) => {
+          dispatchTick = dispatch;
+          return unsubscribe;
+        },
+      }],
+    });
+
+    expect(handle.model().ticks).toBe(0);
+    await flushRender();
+    await handle.settle();
+    expect(requireElement("span").textContent).toBe("0");
+
+    handle.dispatch({ type: "tick" });
+    expect(handle.model().ticks).toBe(1);
+    await flushRender();
+    await handle.settle();
+    expect(requireElement("span").textContent).toBe("1");
+
+    handle.stop();
+    handle.stop();
+    handle.dispatch({ type: "tick" });
+    dispatchTick?.({ type: "tick" });
+
+    expect(unsubscribe).toHaveBeenCalledOnce();
+    expect(handle.model().ticks).toBe(1);
   });
 });
 
@@ -1405,6 +1513,19 @@ function parseTinyFlags(value: unknown): Readonly<{ label: string }> {
     throw new Error("Expected label");
   }
   return { label: value.label };
+}
+
+function tinyProgram() {
+  type Model = Readonly<{ label: string }>;
+  type Msg = Readonly<{ type: "clicked" }>;
+  const events = bindEvents<Msg>();
+
+  return defineProgram<Model, Model, Msg, never>({
+    init: (flags) => [flags, []],
+    update: (model, message) => [{ ...model, label: message.type }, []],
+    view: (model) =>
+      h("button", { onClick: events.clicked({ type: "clicked" }) }, model.label),
+  });
 }
 
 function requireElement(selector: string): Element {

@@ -209,6 +209,33 @@ export type ProgramSubscription<Msg extends ProgramMsg> = Readonly<{
   subscribe: ProgramSubscriber<Msg>;
 }>;
 
+export type ProgramContext<Flags> = Readonly<{
+  flags: Flags;
+  node: HTMLElement;
+}>;
+
+export type Program<
+  Flags,
+  Model,
+  Msg extends ProgramMsg,
+  Effect extends ProgramEffect,
+> = Readonly<{
+  init: (flags: Flags) => Transition<Model, Effect>;
+  update: (model: Model, message: Msg) => Transition<Model, Effect>;
+  view: (model: Model) => VNode<Model>;
+  subscriptions?: (
+    model: Model,
+    context: ProgramContext<Flags>,
+  ) => ReadonlyArray<ProgramSubscription<Msg>>;
+}>;
+
+export type ProgramHandle<Model, Msg extends ProgramMsg> = Readonly<{
+  model: () => Model;
+  dispatch: (message: Msg) => void;
+  settle: () => Promise<void>;
+  stop: () => void;
+}>;
+
 type RuntimeBase<Model, Msg extends ProgramMsg, Effect extends ProgramEffect> = Readonly<{
   init: () => Transition<Model, Effect>;
   update: (model: Model, message: Msg) => Transition<Model, Effect>;
@@ -237,6 +264,44 @@ export type Runtime<
 > &
   RuntimeEffects<Msg, Effect>;
 
+type ProgramMountBase<
+  Flags,
+  Model,
+  Msg extends ProgramMsg,
+  Effect extends ProgramEffect,
+> = Readonly<{
+  flags: Flags;
+  node: HTMLElement;
+  program: Program<Flags, Model, Msg, Effect>;
+}>;
+
+type EffectlessProgramMount<Flags, Model, Msg extends ProgramMsg> =
+  ProgramMountBase<Flags, Model, Msg, never> &
+  Readonly<{ runEffect?: never }>;
+
+type EffectfulProgramMount<
+  Flags,
+  Model,
+  Msg extends ProgramMsg,
+  Effect extends ProgramEffect,
+> = ProgramMountBase<Flags, Model, Msg, Effect> &
+  Readonly<{
+    runEffect: (
+      dispatch: (message: Msg) => void,
+      effect: Effect,
+      context: ProgramContext<Flags>,
+    ) => void | Promise<void>;
+  }>;
+
+export type ProgramMount<
+  Flags,
+  Model,
+  Msg extends ProgramMsg,
+  Effect extends ProgramEffect,
+> = [Effect] extends [never]
+  ? EffectlessProgramMount<Flags, Model, Msg>
+  : EffectfulProgramMount<Flags, Model, Msg, Effect>;
+
 type IslandMountBase<
   Flags,
   Model,
@@ -245,17 +310,7 @@ type IslandMountBase<
 > = Readonly<{
   selector: string;
   parseFlags: (value: unknown) => Flags;
-  init: (
-    flags: Flags,
-    node: HTMLElement,
-  ) => Transition<Model, Effect>;
-  update: (model: Model, message: Msg) => Transition<Model, Effect>;
-  view: (model: Model) => VNode<Model>;
-  subscriptions?: (
-    model: Model,
-    flags: Flags,
-    node: HTMLElement,
-  ) => ReadonlyArray<ProgramSubscription<Msg>>;
+  program: Program<Flags, Model, Msg, Effect>;
 }>;
 
 type EffectlessIslandMount<Flags, Model, Msg extends ProgramMsg> = IslandMountBase<
@@ -281,8 +336,7 @@ type EffectfulIslandMount<
     runEffect: (
       dispatch: (message: Msg) => void,
       effect: Effect,
-      flags: Flags,
-      node: HTMLElement,
+      context: ProgramContext<Flags>,
     ) => void | Promise<void>;
   }>;
 
@@ -300,6 +354,13 @@ type RunningSubscription<State> = readonly [
   payload: unknown,
   unsubscribe: Unsubscribe,
 ];
+
+type AppController<State> = Readonly<{
+  dispatch: Dispatch<State>;
+  model: () => State;
+  settle: () => Promise<void>;
+  stop: () => void;
+}>;
 
 const eventNames: Readonly<Record<string, string>> = {
   onChange: "onchange",
@@ -492,9 +553,18 @@ export function windowResized<Msg extends ProgramMsg>(
   };
 }
 
+export function defineProgram<
+  Flags,
+  Model,
+  Msg extends ProgramMsg,
+  Effect extends ProgramEffect,
+>(program: Program<Flags, Model, Msg, Effect>): Program<Flags, Model, Msg, Effect> {
+  return program;
+}
+
 export function start<Model, Msg extends ProgramMsg, Effect extends ProgramEffect>(
   runtime: Runtime<Model, Msg, Effect>,
-): void {
+): ProgramHandle<Model, Msg> {
   const [state, effects] = runtime.init();
 
   const dispatchMessage: Action<Model, Msg> = (model, message) => {
@@ -552,7 +622,7 @@ export function start<Model, Msg extends ProgramMsg, Effect extends ProgramEffec
 
   const subscriptions = runtime.subscriptions;
 
-  app<Model>(
+  const controller = createApp<Model>(
     subscriptions === undefined
       ? props
       : {
@@ -560,6 +630,44 @@ export function start<Model, Msg extends ProgramMsg, Effect extends ProgramEffec
           subscriptions: (model) => subscriptions(model).map(toSubscriptionTuple),
         },
   );
+
+  return {
+    model: controller.model,
+    dispatch: (message) => {
+      controller.dispatch(dispatchMessage, message);
+    },
+    settle: controller.settle,
+    stop: controller.stop,
+  };
+}
+
+export function mountProgram<
+  Flags,
+  Model,
+  Msg extends ProgramMsg,
+  Effect extends ProgramEffect,
+>(options: ProgramMount<Flags, Model, Msg, Effect>): ProgramHandle<Model, Msg> {
+  const { flags, node, program } = options;
+  const context: ProgramContext<Flags> = { flags, node };
+  const subscriptions = program.subscriptions;
+  const runEffect = options.runEffect;
+  const runtime = {
+    node,
+    init: () => program.init(flags),
+    update: program.update,
+    view: program.view,
+    ...(subscriptions === undefined
+      ? {}
+      : { subscriptions: (model: Model) => subscriptions(model, context) }),
+    ...(runEffect === undefined
+      ? {}
+      : {
+          runEffect: (dispatch: (message: Msg) => void, effect: Effect) =>
+            runEffect(dispatch, effect, context),
+        }),
+  } as unknown as Runtime<Model, Msg, Effect>;
+
+  return start(runtime);
 }
 
 export function mountIslands<
@@ -598,25 +706,17 @@ export function mountIslands<
         throw new Error("Missing data-flags");
       }
       const flags = options.parseFlags(JSON.parse(rawFlags) as unknown);
-      const subscriptions = options.subscriptions;
       const runEffect = options.runEffect;
-      const runtime = {
-        init: () => options.init(flags, node),
-        update: options.update,
-        view: options.view,
-        ...(subscriptions === undefined
-          ? {}
-          : { subscriptions: (model: Model) => subscriptions(model, flags, node) }),
+      const mount = {
+        flags,
+        node,
+        program: options.program,
         ...(runEffect === undefined
           ? {}
-          : {
-              runEffect: (dispatch: (message: Msg) => void, effect: Effect) =>
-                runEffect(dispatch, effect, flags, node),
-            }),
-        node,
+          : { runEffect }),
         // Conditional generics lose their exact optional-property relationships here.
-      } as unknown as Runtime<Model, Msg, Effect>;
-      start(runtime);
+      } as unknown as ProgramMount<Flags, Model, Msg, Effect>;
+      mountProgram(mount);
     } catch (error) {
       const detail = error instanceof Error ? error.message : "Unknown flags error";
       globalThis.console.error(`Unable to mount island ${options.selector}: ${detail}`);
@@ -632,18 +732,37 @@ export function mountIslands<
 }
 
 export function app<State>({
+  ...options
+}: App<State>): Dispatch<State> {
+  return createApp(options).dispatch;
+}
+
+function createApp<State>({
   node,
   view,
   subscriptions,
   dispatch = identityDispatch,
   init = emptyObject,
-}: App<State>): Dispatch<State> {
+}: App<State>): AppController<State> {
   let vdom: VNode<State> | undefined =
     node === undefined ? undefined : recycleNode<State>(node);
   let runningSubscriptions: Array<RunningSubscription<State> | undefined> = [];
   let state: State | undefined;
   let active = true;
   let busy = false;
+  let pendingRender = Promise.resolve();
+  let finishRender: (() => void) | undefined;
+
+  const stop = (): void => {
+    if (!active) {
+      return;
+    }
+
+    active = false;
+    runningSubscriptions = stopSubscriptions(runningSubscriptions);
+    finishRender?.();
+    finishRender = undefined;
+  };
 
   const listener = function listener(this: RuntimeNode, event: Event) {
     const dispatchable = this.events?.[event.type];
@@ -661,8 +780,7 @@ export function app<State>({
     state = nextState;
 
     if (state === null || state === undefined) {
-      active = false;
-      runningSubscriptions = stopSubscriptions(runningSubscriptions);
+      stop();
       return;
     }
 
@@ -676,24 +794,31 @@ export function app<State>({
 
     if (view !== undefined && node !== undefined && !busy) {
       busy = true;
+      pendingRender = new Promise((resolve) => {
+        finishRender = resolve;
+      });
       enqueue(() => {
         busy = false;
+        try {
+          if (active && state !== undefined && node !== undefined) {
+            const parent = node.parentNode;
 
-        if (active && state !== undefined && node !== undefined) {
-          const parent = node.parentNode;
-
-          if (parent !== null) {
-            const nextVNode = view(state);
-            node = patch(
-              parent,
-              node,
-              vdom,
-              nextVNode,
-              listener,
-              false,
-            );
-            vdom = nextVNode;
+            if (parent !== null) {
+              const nextVNode = view(state);
+              node = patch(
+                parent,
+                node,
+                vdom,
+                nextVNode,
+                listener,
+                false,
+              );
+              vdom = nextVNode;
+            }
           }
+        } finally {
+          finishRender?.();
+          finishRender = undefined;
         }
       });
     }
@@ -737,7 +862,12 @@ export function app<State>({
 
   managedDispatch(init);
 
-  return managedDispatch;
+  return {
+    dispatch: managedDispatch,
+    model: () => state as State,
+    settle: () => pendingRender,
+    stop,
+  };
 }
 
 function identityDispatch<State>(dispatch: Dispatch<State>): Dispatch<State> {

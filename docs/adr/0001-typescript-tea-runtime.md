@@ -13,8 +13,10 @@ The runtime centers on:
 - `Model`: immutable island state
 - `Msg`: discriminated-union messages
 - `Effect`: page-local effect values returned by `update`
-- `Runtime`: the typed island program shape
-- `start`: island bootstrapping, message dispatch, effect execution, and subscription patching
+- `Program`: the canonical typed island definition shared by production and tests
+- `defineProgram`: compile-time validation for the program definition
+- `mountProgram`: flags and host element binding for a canonical program
+- `start`: lower-level runtime bootstrapping, message dispatch, effect execution, and subscription patching
 - `h`, `fragment`, `text`, and `memo`: virtual DOM construction
 - JSX types for TSX island views
 - event helpers such as `clicked`, `inputChanged`, `checkedChanged`, and `submitted`
@@ -24,7 +26,7 @@ The public API should make the normal path safe and boring. Application code sho
 
 The runtime owns the DOM mechanics. It may use browser APIs internally to create nodes, attach event listeners, patch keyed children, and reconcile server-rendered nodes.
 
-The lower-level `app` API exists for the runtime and benchmarks. Application islands should use `start`.
+The lower-level `app` API exists for the runtime and benchmarks. Application islands should define one `Program` and mount it with `mountProgram` or `mountIslands`.
 
 ## Design Constraints
 
