@@ -183,7 +183,7 @@ expect(screen.getByRole("button", { name: "1" })).toBeDefined()
 mounted.stop()
 ```
 
-Hypertea does not start JSDOM and does not provide a query or assertion language. Use Vitest, Testing Library, and user-event in the host application. Keep a browser test for layout, pointer geometry, native drag behavior, and browser quirks.
+Hypertea does not start JSDOM and does not provide a query or assertion language. Use Vitest, Testing Library, and user-event in the host application. The automated suite is browserless. Check layout, pointer geometry, native drag behavior, and browser quirks manually when those paths change.
 
 The testing mount captures effects instead of running the production interpreter. `effects()` returns a frozen snapshot of pending `{ effect, dispatch }` values. `takeEffect(index)` removes one pending effect, which lets a test complete requests in any order through normal messages. Unresolved effects do not delay `settle()`, and their dispatchers cannot update a stopped program.
 

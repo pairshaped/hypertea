@@ -25,6 +25,26 @@ Hypertea does not provide its own selector, event, or assertion language.
 
 - Reducer tests run in Node and assert model transitions and effect values.
 - Interaction tests run in JSDOM with Vitest, Testing Library, and user-event. They exercise the production view, event bindings, subscriptions, and update loop.
-- Browser tests cover layout, pointer geometry, native drag behavior, and browser-specific behavior that JSDOM cannot prove.
+- Rust application tests cover authorization, persistence, transactions, server validation, and generated transport contracts.
+- Manual browser checks cover CSS layout, pointer geometry, native drag behavior, focus quirks, and other behavior that JSDOM cannot prove.
+
+The automated suite does not install or start Playwright, Chromium, or another
+browser. State transitions, validation, rendering, keyboard behavior, effect
+ordering, and stale response handling belong in Node or JSDOM tests. A test that
+starts a browser for behavior those layers can prove is at the wrong boundary.
+
+Native drag-and-drop is an accepted manual boundary. Reducer tests prove the
+drag messages and resulting state transitions. Interaction tests prove any
+rendered state before and after those messages. Manual checks prove that the
+browser and drag adapter produce the expected messages from a physical drag,
+that drop targets follow the pointer, and that previews and connectors line up.
+We accept that this boundary has less automated coverage because browser drag
+automation adds more installation and maintenance cost than the risk warrants.
+
+When browser-specific code, drag adapters, or affected layout changes, manually
+check the changed path in a supported browser. Keep that check short and
+feature-specific. Adding an automated browser runner requires a new design
+decision backed by a concrete regression that cannot be represented through the
+production `Program` in Node or JSDOM.
 
 Every complex island exports its canonical program. A separate test-only program definition is not allowed because it can drift from production behavior.
