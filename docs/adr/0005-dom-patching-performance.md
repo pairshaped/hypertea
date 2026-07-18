@@ -41,7 +41,7 @@ The current target is practical parity, not winning every row. A benchmark resul
 The package includes a jsdom benchmark suite:
 
 ```sh
-npm run bench
+pnpm run bench
 ```
 
 The suite compares Hypertea to Hyperapp on text updates, static-shape rerenders, form property/style updates, class-heavy forms, append/remove keyed rows, keyed middle moves, keyed reversals, mixed contact-row lists, memoized children, recycled SSR rows, event dispatch, and subscription preserve/restart paths.

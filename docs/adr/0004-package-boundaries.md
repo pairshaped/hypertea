@@ -9,7 +9,7 @@ Accepted
 Hypertea lives as an independent package inside the private Sports monorepo at
 `packages/hypertea`.
 
-Host applications consume it through the root npm workspace while the interface
+Host applications consume it through the root pnpm workspace while the interface
 is still forming. A git submodule is not the integration mechanism.
 
 ## Package Shape

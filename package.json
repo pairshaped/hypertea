@@ -31,9 +31,9 @@
     "README.md"
   ],
   "scripts": {
-    "bench": "npm run build && node benchmark/dom-patching.mjs",
+    "bench": "pnpm run build && node benchmark/dom-patching.mjs",
     "build": "tsc -p tsconfig.build.json",
-    "check": "npm run typecheck && npm run lint && npm run test:coverage && npm run build",
+    "check": "pnpm run typecheck && pnpm run lint && pnpm run test:coverage && pnpm run build",
     "lint": "eslint .",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",

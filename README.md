@@ -94,17 +94,17 @@ those into separate files would only add ceremony.
 ## Commands
 
 ```sh
-npm run typecheck
-npm run lint
-npm run test:coverage
-npm run build
-npm run check
-npm run bench
+pnpm run typecheck
+pnpm run lint
+pnpm run test:coverage
+pnpm run build
+pnpm run check
+pnpm run bench
 ```
 
-`npm run check` is the command to run before handing work back.
+`pnpm run check` is the command to run before handing work back.
 
-`npm run bench` builds Hypertea and compares its DOM patching against Hyperapp in jsdom. Treat the numbers as regression signals and optimization guidance, not browser parity proof.
+`pnpm run bench` builds Hypertea and compares its DOM patching against Hyperapp in jsdom. Treat the numbers as regression signals and optimization guidance, not browser parity proof.
 
 ## API Shape
 

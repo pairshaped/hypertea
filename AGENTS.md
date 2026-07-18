@@ -4,8 +4,8 @@ Use radical candor. If a design choice weakens Elm-like safety, say so plainly.
 
 This package is intentionally small. Do not add framework-shaped machinery unless the tests and README make the need obvious.
 
-Before claiming the package is healthy, run `npm run check:hypertea` from the
-repository root or `npm run check` from this package directory.
+Before claiming the package is healthy, run `pnpm check:hypertea` from the
+repository root or `pnpm run check` from this package directory.
 
 ## Boundaries
 
