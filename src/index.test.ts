@@ -179,6 +179,8 @@ describe("TEA island runtime", () => {
     | Readonly<{ type: "doubleClicked" }>
     | Readonly<{ type: "changed"; value: string }>
     | Readonly<{ type: "checked"; value: boolean }>
+    | Readonly<{ type: "focused" }>
+    | Readonly<{ type: "blurred" }>
     | Readonly<{ type: "submitted" }>
     | Readonly<{ type: "tick" }>;
 
@@ -484,6 +486,10 @@ describe("TEA island runtime", () => {
             return [{ ...model, text: "submitted" }, []];
           case "tick":
             return [{ ...model, ticks: model.ticks + 1 }, []];
+          case "focused":
+            return [{ ...model, text: "focused" }, []];
+          case "blurred":
+            return [{ ...model, text: "blurred" }, []];
         }
       },
       view: (model) =>
@@ -496,12 +502,17 @@ describe("TEA island runtime", () => {
             { onDblClick: on.clicked({ type: "doubleClicked" }), type: "button" },
             ["double"],
           ),
+          h("button", { onClick: on.clicked({ type: "tick" }), type: "button" }, [
+            "tick",
+          ]),
           h("input", {
             checked: model.enabled,
             onChange: on.checkedChanged((value) => ({ type: "checked", value })),
             type: "checkbox",
           }),
           h("textarea", {
+            onBlur: on.changed({ type: "blurred" }),
+            onFocus: on.changed({ type: "focused" }),
             onInput: on.inputChanged((value) => ({ type: "changed", value })),
             value: model.text,
           }),
@@ -528,6 +539,13 @@ describe("TEA island runtime", () => {
 
     expect(button.textContent).toBe("double clicked");
 
+    const tickButton = requireElement("button:nth-of-type(3)");
+    tickButton.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    tickButton.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flushRender();
+
+    expect(requireElement("span").textContent).toBe("3");
+
     const checkbox = requireElement("input") as HTMLInputElement;
     checkbox.checked = true;
     checkbox.dispatchEvent(new Event("change", { bubbles: true }));
@@ -536,11 +554,21 @@ describe("TEA island runtime", () => {
     expect(checkbox.checked).toBe(true);
 
     const textarea = requireElement("textarea") as HTMLTextAreaElement;
+    textarea.dispatchEvent(new FocusEvent("focus"));
+    await flushRender();
+
+    expect(textarea.value).toBe("focused");
+
     textarea.value = "typed";
     textarea.dispatchEvent(new Event("input", { bubbles: true }));
     await flushRender();
 
     expect(textarea.value).toBe("typed");
+
+    textarea.dispatchEvent(new FocusEvent("blur"));
+    await flushRender();
+
+    expect(textarea.value).toBe("blurred");
 
     const submitEvent = new Event("submit", {
       bubbles: true,
@@ -551,7 +579,7 @@ describe("TEA island runtime", () => {
 
     expect(submitEvent.defaultPrevented).toBe(true);
     expect(requireElement("button").textContent).toBe("submitted");
-    expect(requireElement("span").textContent).toBe("1");
+    expect(requireElement("span").textContent).toBe("3");
     expect(effects).toEqual(["boot"]);
   });
 
@@ -698,6 +726,8 @@ describe("TEA island runtime", () => {
           case "doubleClicked":
           case "changed":
           case "checked":
+          case "focused":
+          case "blurred":
           case "submitted":
             return [model, []];
         }

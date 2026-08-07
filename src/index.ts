@@ -363,12 +363,14 @@ type AppController<State> = Readonly<{
 }>;
 
 const eventNames: Readonly<Record<string, string>> = {
+  onBlur: "onblur",
   onChange: "onchange",
   onClick: "onclick",
   onDblClick: "ondblclick",
   onDragEnd: "ondragend",
   onDragEnter: "ondragenter",
   onDragStart: "ondragstart",
+  onFocus: "onfocus",
   onInput: "oninput",
   onSubmit: "onsubmit",
 };
@@ -614,7 +616,7 @@ export function start<Model, Msg extends ProgramMsg, Effect extends ProgramEffec
     init,
     view: (model: Model) =>
       withDispatch(
-        (message) => dispatchMessage(model, message as Msg),
+        (message) => [dispatchMessage, message as Msg],
         () => runtime.view(model),
       ),
     node: runtime.node,
