@@ -14,6 +14,13 @@ The goal is to make the client-side parts of a server-rendered app feel close to
 
 This is not meant to become a broad SPA framework. It exists for small interactive islands that need more safety than loose JavaScript snippets, without paying the cost of a large client runtime.
 
+## Public boundary
+
+Applications use the package exports declared in `package.json`: the low-level
+runtime, the canonical program API, browserless testing helpers, and the ESLint
+purity configuration. `src/index.ts`, `src/program.ts`, and `src/testing.ts`
+own those interfaces. Benchmark and test internals are not public API.
+
 ## Status
 
 The runtime exposes:
@@ -221,3 +228,9 @@ The lower-level `app()` API remains available from the package root for runtime 
 - [0004: Package Boundaries](docs/adr/0004-package-boundaries.md)
 - [0005: DOM Patching Performance](docs/adr/0005-dom-patching-performance.md)
 - [0006: Browserless Program Testing](docs/adr/0006-browserless-program-testing.md)
+
+## Source ownership
+
+This monorepo is Hypertea's editable source of truth. A public repository may
+be derived with filtered history under the [repository export decision](../../docs/adr/0001-private-monorepo-and-public-library-exports.md),
+but changes come back through this package.
