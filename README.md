@@ -231,6 +231,6 @@ The lower-level `app()` API remains available from the package root for runtime 
 
 ## Source ownership
 
-This monorepo is Hypertea's editable source of truth. A public repository may
-be derived with filtered history under the [repository export decision](../../docs/adr/0001-private-monorepo-and-public-library-exports.md),
-but changes come back through this package.
+The private Sports monorepo is Hypertea's editable source of truth. Public
+copies are derived with filtered history and are not a second editable source.
+Changes come back through this package.
