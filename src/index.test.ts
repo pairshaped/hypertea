@@ -484,6 +484,30 @@ describe("TEA island runtime", () => {
     expect(requireElement("span").textContent).toBe("effect");
   });
 
+  test("keeps subscription context node synchronized after root replacement", async () => {
+    const mount = appendMount("<div></div>");
+    const contexts: Array<{ readonly node: Element }> = [];
+    const handle = mountProgram({
+      node: mount,
+      flags: { tag: "div" },
+      program: defineProgram<{ tag: string }, { tag: string }, { type: "change" }, never>({
+        init: (flags) => [flags, []],
+        update: (model) => [{ tag: model.tag === "div" ? "section" : "div" }, []],
+        view: (model) => h(model.tag, {}, "content"),
+        subscriptions: (_model, context) => [{
+          key: "root-observer",
+          subscribe: () => { contexts.push(context); return () => {}; },
+        }],
+      }),
+    });
+    await flushRender();
+    handle.dispatch({ type: "change" });
+    await flushRender();
+    expect(contexts).toHaveLength(1);
+    expect(contexts[0]?.node).toBe(document.querySelector("section"));
+    handle.stop();
+  });
+
   test("starts with effects and dispatches event helper messages", async () => {
     const mount = appendMount("<form></form>");
     const effects: Array<string> = [];

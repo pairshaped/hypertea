@@ -171,6 +171,7 @@ export type App<State> = Readonly<{
   node?: Node;
   subscriptions?: (state: State) => ReadonlyArray<MaybeSubscription<State>>;
   dispatch?: (dispatch: Dispatch<State>) => Dispatch<State>;
+  nodeChanged?: (node: Element) => void;
 }>;
 
 export type EventBinding<Msg> = Readonly<{
@@ -242,6 +243,7 @@ type RuntimeBase<Model, Msg extends ProgramMsg, Effect extends ProgramEffect> = 
   view: (model: Model) => VNode<Model>;
   subscriptions?: (model: Model) => ReadonlyArray<ProgramSubscription<Msg>>;
   node: Element;
+  nodeChanged?: (node: Element) => void;
 }>;
 
 type RuntimeEffects<Msg extends ProgramMsg, Effect extends ProgramEffect> = [Effect] extends [never]
@@ -621,6 +623,7 @@ export function start<Model, Msg extends ProgramMsg, Effect extends ProgramEffec
         () => runtime.view(model),
       ),
     node: runtime.node,
+    nodeChanged: runtime.nodeChanged,
   };
 
   const subscriptions = runtime.subscriptions;
@@ -651,11 +654,13 @@ export function mountProgram<
   Effect extends ProgramEffect,
 >(options: ProgramMount<Flags, Model, Msg, Effect>): ProgramHandle<Model, Msg> {
   const { flags, node, program } = options;
-  const context: ProgramContext<Flags> = { flags, node };
+  let currentNode = node;
+  const context = { flags, get node() { return currentNode; } } as ProgramContext<Flags>;
   const subscriptions = program.subscriptions;
   const runEffect = options.runEffect;
   const runtime = {
     node,
+    nodeChanged: (nextNode: Element) => { currentNode = nextNode; },
     init: () => program.init(flags),
     update: program.update,
     view: program.view,
@@ -750,6 +755,7 @@ function createApp<State>({
   subscriptions,
   dispatch = identityDispatch,
   init = emptyObject,
+  nodeChanged,
 }: App<State>): AppController<State> {
   let vdom: VNode<State> | undefined =
     node === undefined ? undefined : recycleNode<State>(node);
@@ -820,6 +826,7 @@ function createApp<State>({
                 listener,
                 false,
               );
+              nodeChanged?.(node);
               vdom = nextVNode;
             }
           }
