@@ -352,6 +352,27 @@ describe("TEA island runtime", () => {
     expect(mount.contains(alert)).toBe(true);
   });
 
+  test("can preserve useful server fallback when island flags are invalid", () => {
+    const mount = appendMount(
+      "<div data-tiny-island data-flags='{}'><article>Server fallback</article></div>",
+    );
+    const error = vi.spyOn(globalThis.console, "error").mockImplementation(() => undefined);
+
+    mountIslands({
+      selector: "[data-tiny-island]",
+      parseFlags: parseTinyFlags,
+      program: tinyProgram(),
+      preserveFallbackOnError: true,
+    });
+
+    expect(mount.textContent).toBe("Server fallback");
+    expect(mount.querySelector("[data-island-error]")).toBeNull();
+    expect(mount.getAttribute("data-island-error")).toBe("Expected label");
+    expect(error).toHaveBeenCalledWith(
+      "Unable to mount island [data-tiny-island]: Expected label",
+    );
+  });
+
   test("reports missing island flags", () => {
     appendMount("<div data-tiny-island></div>");
     vi.spyOn(globalThis.console, "error").mockImplementation(() => undefined);

@@ -311,6 +311,7 @@ type IslandMountBase<
   selector: string;
   parseFlags: (value: unknown) => Flags;
   program: Program<Flags, Model, Msg, Effect>;
+  preserveFallbackOnError?: boolean;
 }>;
 
 type EffectlessIslandMount<Flags, Model, Msg extends ProgramMsg> = IslandMountBase<
@@ -722,6 +723,10 @@ export function mountIslands<
     } catch (error) {
       const detail = error instanceof Error ? error.message : "Unknown flags error";
       globalThis.console.error(`Unable to mount island ${options.selector}: ${detail}`);
+      if (options.preserveFallbackOnError === true) {
+        node.dataset.islandError = detail;
+        return;
+      }
       const alert = globalThis.document.createElement("div");
       alert.className = "alert-destructive";
       alert.dataset.islandError = "";
