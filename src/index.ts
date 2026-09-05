@@ -623,7 +623,7 @@ export function start<Model, Msg extends ProgramMsg, Effect extends ProgramEffec
         () => runtime.view(model),
       ),
     node: runtime.node,
-    nodeChanged: runtime.nodeChanged,
+    ...(runtime.nodeChanged === undefined ? {} : { nodeChanged: runtime.nodeChanged }),
   };
 
   const subscriptions = runtime.subscriptions;
@@ -660,7 +660,9 @@ export function mountProgram<
   const runEffect = options.runEffect;
   const runtime = {
     node,
-    nodeChanged: (nextNode: Element) => { currentNode = nextNode; },
+    nodeChanged: (nextNode: Element) => {
+      if (nextNode instanceof HTMLElement) currentNode = nextNode;
+    },
     init: () => program.init(flags),
     update: program.update,
     view: program.view,
@@ -826,7 +828,7 @@ function createApp<State>({
                 listener,
                 false,
               );
-              nodeChanged?.(node);
+              if (node instanceof Element) nodeChanged?.(node);
               vdom = nextVNode;
             }
           }
