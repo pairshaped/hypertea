@@ -269,7 +269,7 @@ describe("TEA island runtime", () => {
     type Model = Readonly<{ label: string }>;
     type Msg = Readonly<{ type: "setLabel"; label: string }>;
     type Effect = Readonly<{ type: "boot" }>;
-    const mount = appendMount("<span></span>") as HTMLElement;
+    const mount = appendMount("<span></span>");
     const unsubscribe = vi.fn();
     const seen: Array<string> = [];
     const canonical = defineProgram<Flags, Model, Msg, Effect>({
@@ -307,7 +307,7 @@ describe("TEA island runtime", () => {
 
   test("mounts an effectless canonical program without subscriptions", async () => {
     type Msg = Readonly<{ type: "setLabel"; label: string }>;
-    const mount = appendMount("<span></span>") as HTMLElement;
+    const mount = appendMount("<span></span>");
     const canonical = defineProgram<
       Readonly<{ label: string }>,
       Readonly<{ label: string }>,
@@ -491,9 +491,14 @@ describe("TEA island runtime", () => {
     const handle = mountProgram({
       node: mount,
       flags: { tag: "div" },
-      program: defineProgram<{ tag: string }, { tag: string }, { type: "change" }, never>({
+      program: defineProgram<
+        { tag: string },
+        { tag: string },
+        { type: "change"; tag: string },
+        never
+      >({
         init: (flags) => [flags, []],
-        update: (model) => [{ tag: model.tag === "div" ? "section" : "div" }, []],
+        update: (_model, message) => [{ tag: message.tag }, []],
         view: (model) => h(model.tag, {}, "content"),
         subscriptions: (_model, context) => [{
           key: "root-observer",
@@ -502,10 +507,14 @@ describe("TEA island runtime", () => {
       }),
     });
     await flushRender();
-    handle.dispatch({ type: "change" });
+    handle.dispatch({ type: "change", tag: "section" });
     await flushRender();
     expect(contexts).toHaveLength(1);
     expect(contexts[0]?.node).toBe(document.querySelector("section"));
+    handle.dispatch({ type: "change", tag: "svg" });
+    await flushRender();
+    expect(document.querySelector("svg")).not.toBeNull();
+    expect(contexts[0]?.node.tagName).toBe("SECTION");
     handle.stop();
     expect(unsubscribed).toBe(1);
   });
@@ -1569,12 +1578,12 @@ function renderMixedView(state: CounterState): VNode<CounterState> {
   ]);
 }
 
-function appendMount(markup: string): Element {
+function appendMount(markup: string): HTMLElement {
   globalThis.document.body.insertAdjacentHTML("beforeend", markup);
-  const mount = globalThis.document.body.firstElementChild;
+  const mount = globalThis.document.body.firstElementChild as HTMLElement | null;
 
   if (mount === null) {
-    throw new Error("Expected mount element.");
+    throw new Error("Expected HTML mount element.");
   }
 
   return mount;
