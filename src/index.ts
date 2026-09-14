@@ -392,11 +392,30 @@ export function text(value: unknown, node?: Node): TextVNode {
   return createVNode(String(value), emptyObject, emptyArray, textNodeType, node);
 }
 
+// tsconfig jsxFragmentFactory makes esbuild compile <>...</> to
+// h(fragment, props, ...children), so the tag may be the fragment factory.
+// The string-tag overload comes first so element calls keep the exact
+// ElementVNode return type; only fragment calls get the array type.
 export function h<State = unknown>(
   tag: string,
   props?: Props,
   ...children: Array<Child<State>>
-): ElementVNode<State> {
+): ElementVNode<State>;
+export function h<State = unknown>(
+  tag: typeof fragment,
+  props?: Props,
+  ...children: Array<Child<State>>
+): Array<VNode<State>>;
+export function h<State = unknown>(
+  tag: string | typeof fragment,
+  props?: Props,
+  ...children: Array<Child<State>>
+): ElementVNode<State> | Array<VNode<State>> {
+  if (typeof tag !== "string") {
+    // A fragment renders its children inline; flattening here keeps the
+    // patcher from treating the fragment factory as a component view.
+    return flattenChildren(children);
+  }
   const { class: classValue } = props ?? emptyObject;
   const key = props?.key;
   const nextProps: Record<string, unknown> = {};

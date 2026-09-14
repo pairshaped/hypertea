@@ -121,6 +121,24 @@ describe("VNode helpers", () => {
     ]);
   });
 
+  test("compiles fragment shorthand tags to flattened children", () => {
+    // tsconfig jsxFragmentFactory makes esbuild compile <>...</> to
+    // h(fragment, props, ...children); the result must be flat children,
+    // never a component vnode that the patcher would try to render.
+    const compiled = h<CounterState>(fragment, { key: "ignored" }, "Hello ", [
+      text("there"),
+      null,
+      [h<CounterState>("b", undefined, text("bold"))],
+    ]);
+
+    expect(Array.isArray(compiled)).toBe(true);
+    expect(compiled.map((child) => (child as VNode).tag)).toEqual([
+      "Hello ",
+      "there",
+      "b",
+    ]);
+  });
+
   test("supports omitted children and class objects with no active values", () => {
     const vnode = h<CounterState>("div", {
       class: { hidden: false, missing: null },
