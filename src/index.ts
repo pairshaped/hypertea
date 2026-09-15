@@ -754,7 +754,8 @@ export function mountIslands<
         return;
       }
       const alert = globalThis.document.createElement("div");
-      alert.className = "alert-destructive";
+      // The mount-error placeholder is styled by `[data-island-error]` in the CSS foundation, so
+      // this library stays framework-agnostic and emits no styling class of its own.
       alert.dataset.islandError = "";
       alert.setAttribute("role", "alert");
       alert.setAttribute("title", detail);
