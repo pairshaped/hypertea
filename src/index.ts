@@ -1208,7 +1208,7 @@ function patchProperty(
   listener: EventListener,
   isSvg: boolean,
 ): void {
-  const key = prop === "controlledValue" ? "value" : prop;
+  const key = controlledProperties[prop] ?? prop;
 
   if (key === "style") {
     patchStyle(node.style, oldValue, newValue);
@@ -1466,6 +1466,15 @@ function patchAfterChildren(tag: string | MemoView<unknown>, key: string): boole
   return tag === "select" && (key === "value" || key === "controlledValue");
 }
 
+// The `controlled*` props mirror a DOM property but always write the declared value, so a
+// program that validates or normalizes on input can put a rejected value back. Plain props
+// stay uncontrolled once the server-rendered control exists.
+const controlledProperties: Readonly<Record<string, string>> = {
+  controlledValue: "value",
+  controlledChecked: "checked",
+  controlledSelected: "selected",
+};
+
 function patchChangedProperty(
   element: PatchableElement,
   key: string,
@@ -1476,10 +1485,11 @@ function patchChangedProperty(
 ): void {
   // A server-rendered control is uncontrolled once it exists: the DOM owns what the user typed
   // or toggled, so a re-render must not write the declared value back over it. Only a changed
-  // declared value writes. `controlledValue` opts a field into mirroring the model instead, so
-  // a value the program rejected is written back. `<select>` value is re-applied by
+  // declared value writes. A `controlled*` prop compares the live property instead, so a value
+  // the program rejected is written back. `<select>` value is re-applied by
   // patchDeferredProperties after its options change.
-  const currentValue = key === "controlledValue" ? element.value : oldValue;
+  const property = controlledProperties[key];
+  const currentValue = property === undefined ? oldValue : element[property];
 
   if (!Object.is(currentValue, newValue)) {
     patchProperty(element, key, oldValue, newValue, listener, isSvg);

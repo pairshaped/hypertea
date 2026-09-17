@@ -165,7 +165,7 @@ mountIslands({
 
 ## Field Values
 
-Controls are uncontrolled after mount: `value`, `checked`, and `selected` write to the DOM only when the declared prop changes, so a re-render never overwrites what the user typed or toggled. A field that must mirror the model uses `controlledValue` instead, which compares the live DOM value against the declared value on every patch so a rejected value is written back. `value` and `controlledValue` on a `<select>` are applied after its options patch, so a replaced option list does not lose the declared selection.
+Controls are uncontrolled after mount: `value`, `checked`, and `selected` write to the DOM only when the declared prop changes, so a re-render never overwrites what the user typed or toggled. A field that must mirror the model uses `controlledValue` (text inputs, textareas, selects), `controlledChecked` (checkboxes, radios), or `controlledSelected` (options) instead. Those compare the live DOM property against the declared value on every patch, so a rejected value is written back. `value` and `controlledValue` on a `<select>` are applied after its options patch, so a replaced option list does not lose the declared selection.
 
 See [0007: Field Value Ownership After Mount](docs/adr/0007-field-value-ownership.md).
 

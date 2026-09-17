@@ -999,6 +999,61 @@ describe("app", () => {
     expect(input.value).toBe("start");
   });
 
+  test("writes a controlled checked state back over the user's toggle", async () => {
+    const mount = appendMount("<div></div>");
+    const rerender: Action<CounterState> = (state) => ({ ...state, count: state.count + 1 });
+
+    app<CounterState>({
+      init: initialState,
+      view: (state) =>
+        h<CounterState>("div", {},
+          h<CounterState>("input", { type: "checkbox", controlledChecked: true }),
+          h<CounterState>("button", { onclick: rerender }, text(`rerender ${String(state.count)}`)),
+        ),
+      node: mount,
+    });
+
+    await flushRender();
+
+    const checkbox = requireElement("input") as HTMLInputElement;
+    expect(checkbox.checked).toBe(true);
+    checkbox.checked = false;
+
+    requireElement("button").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flushRender();
+
+    expect(checkbox.checked).toBe(true);
+  });
+
+  test("writes a controlled option selection back over the user's selection", async () => {
+    const mount = appendMount("<div></div>");
+    const rerender: Action<CounterState> = (state) => ({ ...state, count: state.count + 1 });
+
+    app<CounterState>({
+      init: initialState,
+      view: (state) =>
+        h<CounterState>("div", {},
+          h<CounterState>("select", {},
+            h<CounterState>("option", { value: "first", controlledSelected: true }, text("First")),
+            h<CounterState>("option", { value: "second", controlledSelected: false }, text("Second")),
+          ),
+          h<CounterState>("button", { onclick: rerender }, text(`rerender ${String(state.count)}`)),
+        ),
+      node: mount,
+    });
+
+    await flushRender();
+
+    const select = requireElement("select") as HTMLSelectElement;
+    expect(select.value).toBe("first");
+    select.value = "second";
+
+    requireElement("button").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flushRender();
+
+    expect(select.value).toBe("first");
+  });
+
   test("writes a controlled select value back over the user's selection", async () => {
     const mount = appendMount("<div></div>");
     const rerender: Action<CounterState> = (state) => ({ ...state, count: state.count + 1 });
