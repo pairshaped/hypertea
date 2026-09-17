@@ -905,6 +905,129 @@ describe("app", () => {
     expect((select as HTMLSelectElement).value).toBe("second");
   });
 
+  test("keeps values the user typed when a re-render does not change the declared value", async () => {
+    const mount = appendMount("<div></div>");
+    const rerender: Action<CounterState> = (state) => ({
+      ...state,
+      count: state.count + 1,
+    });
+
+    app<CounterState>({
+      init: initialState,
+      view: (state) =>
+        h<CounterState>("div", {},
+          h<CounterState>("input", { value: state.label }),
+          h<CounterState>("textarea", { value: state.label }),
+          h<CounterState>("select", { value: "second" },
+            h<CounterState>("option", { value: "" }, text("Choose")),
+            h<CounterState>("option", { value: "second" }, text("Second")),
+          ),
+          h<CounterState>("button", { onclick: rerender }, text("rerender")),
+          h<CounterState>("span", {}, text(String(state.count))),
+        ),
+      node: mount,
+    });
+
+    await flushRender();
+
+    const input = requireElement("input") as HTMLInputElement;
+    const textarea = requireElement("textarea") as HTMLTextAreaElement;
+    const select = requireElement("select") as HTMLSelectElement;
+    input.value = "typed input";
+    textarea.value = "typed textarea";
+    expect(select.value).toBe("second");
+
+    requireElement("button").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flushRender();
+
+    expect(requireElement("span").textContent).toBe("1");
+    expect(input.value).toBe("typed input");
+    expect(textarea.value).toBe("typed textarea");
+    expect(select.value).toBe("second");
+  });
+
+  test("keeps a toggle the user made when a re-render does not change the declared checked state", async () => {
+    const mount = appendMount("<div></div>");
+    const rerender: Action<CounterState> = (state) => ({
+      ...state,
+      count: state.count + 1,
+    });
+
+    app<CounterState>({
+      init: initialState,
+      view: (state) =>
+        h<CounterState>("div", {},
+          h<CounterState>("input", { type: "checkbox", checked: state.enabled }),
+          h<CounterState>("button", { onclick: rerender }, text("rerender")),
+        ),
+      node: mount,
+    });
+
+    await flushRender();
+
+    const checkbox = requireElement("input") as HTMLInputElement;
+    expect(checkbox.checked).toBe(true);
+    checkbox.checked = false;
+
+    requireElement("button").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flushRender();
+
+    expect(checkbox.checked).toBe(false);
+  });
+
+  test("writes a controlled value back over what the user typed", async () => {
+    const mount = appendMount("<div></div>");
+    const rejectInput: Action<CounterState, Event> = (state) => ({ ...state });
+
+    app<CounterState>({
+      init: initialState,
+      view: (state) =>
+        h<CounterState>("div", {},
+          h<CounterState>("input", { controlledValue: state.label, oninput: rejectInput }),
+        ),
+      node: mount,
+    });
+
+    await flushRender();
+
+    const input = requireElement("input") as HTMLInputElement;
+    expect(input.value).toBe("start");
+    input.value = "rejected";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    await flushRender();
+
+    expect(input.value).toBe("start");
+  });
+
+  test("writes a controlled select value back over the user's selection", async () => {
+    const mount = appendMount("<div></div>");
+    const rerender: Action<CounterState> = (state) => ({ ...state, count: state.count + 1 });
+
+    app<CounterState>({
+      init: initialState,
+      view: (state) =>
+        h<CounterState>("div", {},
+          h<CounterState>("select", { controlledValue: "second" },
+            h<CounterState>("option", { value: "" }, text("Choose")),
+            h<CounterState>("option", { value: "second" }, text("Second")),
+          ),
+          h<CounterState>("button", { onclick: rerender }, text(`rerender ${String(state.count)}`)),
+        ),
+      node: mount,
+    });
+
+    await flushRender();
+
+    const select = requireElement("select") as HTMLSelectElement;
+    expect(select.value).toBe("second");
+    select.value = "";
+
+    requireElement("button").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flushRender();
+
+    expect(select.value).toBe("second");
+  });
+
   test("renders state, patches text and properties, and dispatches event actions", async () => {
     const mount = appendMount("<main id=\"app\">server</main>");
     const increment: Action<CounterState, Event> = (state) => ({

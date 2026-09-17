@@ -1202,12 +1202,14 @@ function isPlainPayload(value: unknown): value is Record<string, unknown> {
 
 function patchProperty(
   node: PatchableElement,
-  key: string,
+  prop: string,
   oldValue: unknown,
   newValue: unknown,
   listener: EventListener,
   isSvg: boolean,
 ): void {
+  const key = prop === "controlledValue" ? "value" : prop;
+
   if (key === "style") {
     patchStyle(node.style, oldValue, newValue);
     return;
@@ -1447,13 +1449,21 @@ function patchDeferredProperties(
   listener: EventListener,
   isSvg: boolean,
 ): void {
-  if (!patchAfterChildren(tag, "value")) return;
-  if (!("value" in oldProps) && !("value" in newProps)) return;
-  patchChangedProperty(element, "value", oldProps.value, newProps.value, listener, isSvg);
+  if (tag !== "select") return;
+  const key = "value" in newProps
+    ? "value"
+    : ("controlledValue" in newProps ? "controlledValue" : null);
+  if (key === null) return;
+  // A `<select>` selection is compared against the live selection after its options change,
+  // because replacing options can reset the browser selection even when the declared value did
+  // not change.
+  if (!Object.is(element.value, newProps[key])) {
+    patchProperty(element, key, oldProps[key], newProps[key], listener, isSvg);
+  }
 }
 
 function patchAfterChildren(tag: string | MemoView<unknown>, key: string): boolean {
-  return tag === "select" && key === "value";
+  return tag === "select" && (key === "value" || key === "controlledValue");
 }
 
 function patchChangedProperty(
@@ -1464,10 +1474,12 @@ function patchChangedProperty(
   listener: EventListener,
   isSvg: boolean,
 ): void {
-  const currentValue =
-    key === "value" || key === "selected" || key === "checked"
-      ? element[key]
-      : oldValue;
+  // A server-rendered control is uncontrolled once it exists: the DOM owns what the user typed
+  // or toggled, so a re-render must not write the declared value back over it. Only a changed
+  // declared value writes. `controlledValue` opts a field into mirroring the model instead, so
+  // a value the program rejected is written back. `<select>` value is re-applied by
+  // patchDeferredProperties after its options change.
+  const currentValue = key === "controlledValue" ? element.value : oldValue;
 
   if (!Object.is(currentValue, newValue)) {
     patchProperty(element, key, oldValue, newValue, listener, isSvg);

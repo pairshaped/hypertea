@@ -163,6 +163,12 @@ mountIslands({
 
 `mountProgram()` and `start()` return a handle with `model()`, `dispatch()`, `settle()`, and `stop()`. `settle()` waits for the currently queued DOM render. It does not wait for effects, timers, or network requests. `stop()` is idempotent and removes active subscriptions.
 
+## Field Values
+
+Controls are uncontrolled after mount: `value`, `checked`, and `selected` write to the DOM only when the declared prop changes, so a re-render never overwrites what the user typed or toggled. A field that must mirror the model uses `controlledValue` instead, which compares the live DOM value against the declared value on every patch so a rejected value is written back. `value` and `controlledValue` on a `<select>` are applied after its options patch, so a replaced option list does not lose the declared selection.
+
+See [0007: Field Value Ownership After Mount](docs/adr/0007-field-value-ownership.md).
+
 ## Browserless Interaction Tests
 
 Tests provide their own DOM environment and mount the production program through the testing entry point:
@@ -228,6 +234,7 @@ The lower-level `app()` API remains available from the package root for runtime 
 - [0004: Package Boundaries](docs/adr/0004-package-boundaries.md)
 - [0005: DOM Patching Performance](docs/adr/0005-dom-patching-performance.md)
 - [0006: Browserless Program Testing](docs/adr/0006-browserless-program-testing.md)
+- [0007: Field Value Ownership After Mount](docs/adr/0007-field-value-ownership.md)
 
 ## Source ownership
 
