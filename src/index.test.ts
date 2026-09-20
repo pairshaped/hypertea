@@ -391,6 +391,33 @@ describe("TEA island runtime", () => {
     );
   });
 
+  test("preserves focus on an equivalent named fallback control during mount", () => {
+    const mount = appendMount(
+      "<div data-tiny-island data-flags='{\"label\":\"ready\"}'><input name='amount'></div>",
+    );
+    const fallback = mount.querySelector<HTMLInputElement>('input[name="amount"]');
+    if (fallback === null) throw new Error("missing fallback input");
+    fallback.focus();
+
+    mountIslands({
+      selector: "[data-tiny-island]",
+      parseFlags: parseTinyFlags,
+      program: defineProgram<
+        Readonly<{ label: string }>,
+        Readonly<{ label: string }>,
+        Readonly<{ type: "noop" }>,
+        never
+      >({
+        init: (flags) => [flags, []],
+        update: (model) => [model, []],
+        view: () => h("input", { name: "amount" }),
+      }),
+    });
+
+    const mounted = mount.querySelector<HTMLInputElement>('input[name="amount"]');
+    expect(globalThis.document.activeElement).toBe(mounted);
+  });
+
   test("reports missing island flags", () => {
     appendMount("<div data-tiny-island></div>");
     vi.spyOn(globalThis.console, "error").mockImplementation(() => undefined);
