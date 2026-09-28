@@ -27,7 +27,7 @@ export class WebMCPInvocationError extends Error {
   }
 }
 
-type ToolMetadata = Readonly<{
+export type WebMCPToolMetadata = Readonly<{
   name: string;
   description: string;
   title?: string;
@@ -40,20 +40,97 @@ type ToolMetadata = Readonly<{
   }>;
 }>;
 
-export type WebMCPTool<Msg extends ProgramMsg> = ToolMetadata & Readonly<{
+export type WebMCPTool<Msg extends ProgramMsg> = WebMCPToolMetadata & Readonly<{
   toMessage: (input: unknown, invocation: WebMCPInvocation) => Msg;
 }>;
 
-export type WebMCPRegisteredTool = ToolMetadata & Readonly<{
+export type WebMCPRegisteredTool = WebMCPToolMetadata & Readonly<{
   execute: (input: unknown, options?: Readonly<{ signal: AbortSignal; }>) => Promise<WebMCPValue>;
 }>;
+
+export type WebMCPAgent = Readonly<{
+  version: 1;
+  getTools: () => ReadonlyArray<WebMCPToolMetadata>;
+  executeTool: (name: string, input: unknown, options?: Readonly<{ signal: AbortSignal; }>) => Promise<WebMCPValue>;
+}>;
+
+declare global {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-definitions -- Extend the browser's ambient Window interface.
+  interface Window {
+    hyperteaAgent?: WebMCPAgent;
+  }
+}
+
+type AgentPublication = {
+  readonly entries: Map<string, Readonly<{ tool: WebMCPRegisteredTool; metadata: string; }>>;
+  readonly catalog: HTMLScriptElement;
+  readonly agent: WebMCPAgent;
+  definitions: string;
+};
+
+const agentPublications = new WeakMap<Document, AgentPublication>();
+
+function refreshAgentCatalog(publication: AgentPublication): void {
+  publication.definitions = `[${[...publication.entries.values()].map((entry) => entry.metadata).join(",")}]`;
+  publication.catalog.textContent = `{"version":1,"global":"hyperteaAgent","tools":${publication.definitions}}`;
+}
+
+function exposeAgentTools(page: Document, tools: ReadonlyArray<WebMCPRegisteredTool>): () => void {
+  const host = page.defaultView ?? undefined;
+  if (host === undefined) throw new Error("Agent exposure requires a browser window");
+  let publication = agentPublications.get(page);
+  const names = new Set(publication?.entries.keys());
+  // Validate and serialize before changing a shared publication. Failure in one
+  // program must leave other programs' tools and catalog intact.
+  const entries = tools.map((tool) => {
+    if (names.has(tool.name)) throw new Error(`Duplicate tool: ${tool.name}`);
+    names.add(tool.name);
+    const { name, description, title, inputSchema, annotations } = tool;
+    return { tool, metadata: JSON.stringify({ name, description, title, inputSchema, annotations }) };
+  });
+  if (publication === undefined) {
+    if ("hyperteaAgent" in host || page.getElementById("hypertea-agent-tools") !== null) {
+      throw new Error("Hypertea agent tools are already exposed in this document");
+    }
+    const catalog = page.createElement("script");
+    catalog.id = "hypertea-agent-tools";
+    catalog.type = "application/json";
+    const created: AgentPublication = {
+      entries: new Map(), catalog, definitions: "[]",
+      agent: {
+        version: 1,
+        getTools: () => JSON.parse(created.definitions) as ReadonlyArray<WebMCPToolMetadata>,
+        executeTool: async (name, input, options) => {
+          const entry = created.entries.get(name);
+          if (entry === undefined) throw new Error(`Unknown Hypertea tool: ${name}`);
+          return entry.tool.execute(input, options);
+        },
+      },
+    };
+    host.hyperteaAgent = created.agent;
+    page.head.append(catalog);
+    agentPublications.set(page, created);
+    publication = created;
+  }
+  for (const entry of entries) publication.entries.set(entry.tool.name, entry);
+  refreshAgentCatalog(publication);
+  const owned = publication;
+  return () => {
+    for (const tool of tools) owned.entries.delete(tool.name);
+    refreshAgentCatalog(owned);
+    if (owned.entries.size !== 0) return;
+    if (host.hyperteaAgent === owned.agent) delete host.hyperteaAgent;
+    owned.catalog.remove();
+    agentPublications.delete(page);
+  };
+}
 
 type ModelContext = Readonly<{
   registerTool: (tool: WebMCPRegisteredTool, options: Readonly<{ signal: AbortSignal; }>) => Promise<void>;
 }>;
 
 export function defineWebMCPTool<Input, Msg extends ProgramMsg>(
-  declaration: ToolMetadata & Readonly<{
+  declaration: WebMCPToolMetadata & Readonly<{
     parseInput: (input: unknown) => Input;
     toMessage: (input: Input, invocation: WebMCPInvocation) => Msg;
   }>,
@@ -91,25 +168,27 @@ export function createWebMCP<Msg extends ProgramMsg>(options: Readonly<{
         key,
         tools,
         subscribe: (dispatch, context) => {
-          const modelContext = typeof document === "undefined" ? undefined
-            : (document as Document & { modelContext?: ModelContext; }).modelContext;
-          if (modelContext === undefined) return () => {
-            // Unsupported browsers have no registrations to remove.
+          const page = typeof document === "undefined" ? undefined : document;
+          const modelContext = (page as (Document & { modelContext?: ModelContext; }) | undefined)?.modelContext;
+          if (page === undefined) return () => {
+            // Server-side use has no document to publish tools into.
           };
           if (subscribed) throw new Error("Create one WebMCP bridge per mounted program");
           subscribed = true;
           const registration = new AbortController();
           let active = true;
+          let removeAgent: (() => void) | undefined;
           const unsubscribe = () => {
             if (!active) return;
             active = false;
             subscribed = false;
             registration.abort();
+            removeAgent?.();
             for (const invocation of pending.values()) invocation.cancel();
           };
-          void Promise.all(tools.map(async (tool) => {
+          const registered = tools.map((tool): WebMCPRegisteredTool => {
             const { toMessage, ...metadata } = tool;
-            await modelContext.registerTool({
+            return {
               ...metadata,
               execute: async (input, execution) => {
                 const signal = execution?.signal;
@@ -148,8 +227,14 @@ export function createWebMCP<Msg extends ProgramMsg>(options: Readonly<{
                   }
                 });
               },
-            }, { signal: registration.signal });
-          })).catch((error: unknown) => {
+            };
+          });
+          void (async () => {
+            if (registered.length !== 0) removeAgent = exposeAgentTools(page, registered);
+            await Promise.all(registered.map(async (tool) => {
+              await modelContext?.registerTool(tool, { signal: registration.signal });
+            }));
+          })().catch((error: unknown) => {
             if (!active) return;
             unsubscribe();
             dispatch(options.onRegistrationError(error));

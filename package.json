@@ -43,6 +43,7 @@
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "test:webmcp": "pnpm run build && node bin/test-webmcp.mjs",
+    "test:webmcp:fallback": "pnpm run build && node bin/test-webmcp.mjs --fallback",
     "typecheck": "tsc --noEmit"
   },
   "keywords": [

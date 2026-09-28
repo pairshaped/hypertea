@@ -120,6 +120,9 @@ example and compiled library, saves screenshots under the system temporary
 directory, and closes its server and browser. Finish other Playwright sessions
 first. The normal check stays browserless.
 
+`pnpm --filter @pairshaped/hypertea test:webmcp:fallback` runs the same example
+through its JavaScript bridge with native WebMCP disabled in the test browser.
+
 `pnpm run bench` builds Hypertea and compares its DOM patching against Hyperapp in jsdom. Treat the numbers as regression signals and optimization guidance, not browser parity proof.
 
 ## API Shape
@@ -237,12 +240,40 @@ request path or infer success from rendering or a loading flag.
 
 Registration is a managed subscription. Removing it cancels pending callers and
 unregisters the tools. Completion is a managed effect that waits for rendering
-before replying. Unsupported browsers keep the ordinary UI.
+before replying.
+
+Register once with `bridge.subscription(tools)`. Hypertea publishes both:
+
+- Native tools through `document.modelContext`, when available.
+- `window.hyperteaAgent` and an inert JSON catalog at
+  `script#hypertea-agent-tools[type="application/json"]`, in every browser
+  running the program.
+
+No URL parameter or mode switch is needed. Both interfaces use the same
+validation, messages, effects and completion handling. An agent with permission
+to execute page JavaScript can discover and invoke the tools:
+
+```js
+window.hyperteaAgent.getTools();
+await window.hyperteaAgent.executeTool("add_counter", { amount: 2 });
+```
+
+The example above calls the counter tool from the integration guide. The catalog
+contains the names, descriptions, schemas and annotations of the current page's
+registered tools. It updates as programs add or remove tools, and disappears
+with the last tool set. Multiple programs share the catalog; names must be unique
+across the document.
+
+The fallback does not make an agent discover tools automatically. Give it the
+calling instructions or use a browser connector that knows this convention.
+Agents limited to screenshots or accessibility snapshots can still use the
+ordinary UI. The bridge provides no browser permission dialog or extra authority;
+application validation, confirmation and server authorization still apply.
 
 Read the [application integration guide](docs/webmcp.md) for typed usage,
 asynchronous outcomes, cancellation, and the exact browser compatibility tested.
-The [native example](test/webmcp.html) exercises both local and simulated async
-actions.
+The [browser example](test/webmcp.html) exercises both interfaces with local and
+simulated async actions.
 
 ## Non-Goals
 

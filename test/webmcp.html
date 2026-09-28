@@ -82,7 +82,7 @@
         view: (model) => h("main", { id: "app" },
           h("h1", {}, "Hypertea + WebMCP"),
           h("p", {}, "Buttons and tools use the same messages, update and effects."),
-          h("p", { id: "native" }, model.native ? "Native WebMCP API available" : "WebMCP unavailable; buttons still work"),
+          h("p", { id: "native" }, model.native ? "Native WebMCP and JavaScript bridge available" : "Agent JavaScript bridge available"),
           h("h2", {}, "Counter"),
           h("output", { id: "count" }, String(model.count)),
           h("button", { onClick: clicked({ type: "add", amount: 1 }) }, "Add 1"),

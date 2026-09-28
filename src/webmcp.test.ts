@@ -15,6 +15,8 @@ afterEach(() => {
   for (const stop of stops.splice(0)) stop();
   vi.unstubAllGlobals();
   Reflect.deleteProperty(document, "modelContext");
+  Reflect.deleteProperty(window, "hyperteaAgent");
+  document.getElementById("hypertea-agent-tools")?.remove();
   vi.useRealTimers();
   document.body.replaceChildren();
 });
@@ -47,7 +49,7 @@ function parseAmount(input: unknown): number {
   return input.amount;
 }
 
-function mountAsyncCounter() {
+function mountAsyncCounter(names: ReadonlyArray<string> = ["save"]) {
   type Msg =
     | Readonly<{ type: "save"; amount: number; invocation: WebMCPInvocation; }>
     | Readonly<{ type: "saved"; amount: number; invocation: WebMCPInvocation; status: string; }>
@@ -58,14 +60,14 @@ function mountAsyncCounter() {
   type Model = Readonly<{ count: number; enabled: boolean; alternate: boolean; error: string; }>;
   const saves: Array<Save> = [];
   const bridge = createWebMCP<Msg>({ onRegistrationError: (error) => ({ type: "registrationFailed", error }) });
-  const declarations = [defineWebMCPTool({
-    name: "save",
+  const declarations = names.map((name) => defineWebMCPTool({
+    name,
     description: "Save a counter value",
     inputSchema: { type: "object", properties: { amount: { type: "number" } }, required: ["amount"] },
     parseInput: parseAmount,
     toMessage: (amount, invocation): Msg => ({ type: "save", amount, invocation }),
-  })];
-  const alternate = [{ ...required(declarations[0]), name: "save_alternate" }];
+  }));
+  const alternate = declarations.map((tool) => ({ ...tool, name: `${tool.name}_alternate` }));
   const program = defineProgram<undefined, Model, Msg, Save | WebMCPCompletion>({
     init: () => [{ count: 0, enabled: true, alternate: false, error: "" }, []],
     update: (model, message) => {
@@ -104,6 +106,140 @@ function mountAsyncCounter() {
 }
 
 describe("WebMCP program integration", () => {
+  test("registering tools exposes a catalog and completes calls without native WebMCP", async () => {
+    const { mounted, node, saves } = mountAsyncCounter();
+    const agent = required(window.hyperteaAgent);
+    const catalog = document.querySelector('script#hypertea-agent-tools[type="application/json"]');
+    expect(JSON.parse(catalog?.textContent ?? "{}")).toMatchObject({
+      version: 1, global: "hyperteaAgent", tools: [{ name: "save" }],
+    });
+    expect(agent.getTools().map((tool) => tool.name)).toEqual(["save"]);
+    const pending = agent.executeTool("save", { amount: 4 });
+    mounted.dispatch({ ...required(saves[0]), type: "saved", status: "applied" });
+    expect(await pending).toEqual({ status: "applied", count: 4 });
+    expect(node.textContent).toBe("4");
+    mounted.stop();
+    expect(window.hyperteaAgent).toBeUndefined();
+    expect(document.getElementById("hypertea-agent-tools")).toBeNull();
+  });
+
+  test("another program cannot overwrite an exposed agent", async () => {
+    const first = mountAsyncCounter();
+    const agent = required(window.hyperteaAgent);
+    const second = mountAsyncCounter();
+    await second.mounted.settle();
+    expect(second.mounted.model().error).toMatch(/Duplicate tool/);
+    expect(window.hyperteaAgent).toBe(agent);
+    second.mounted.stop();
+    const pending = agent.executeTool("save", { amount: 5 });
+    first.mounted.dispatch({ ...required(first.saves[0]), type: "saved", status: "applied" });
+    expect(await pending).toEqual({ status: "applied", count: 5 });
+  });
+
+  test("fallback tool names must be unambiguous even without browser validation", async () => {
+    const { mounted } = mountAsyncCounter(["save", "save"]);
+    await mounted.settle();
+    expect(mounted.model().error).toMatch(/Duplicate tool/);
+    expect(window.hyperteaAgent).toBeUndefined();
+    expect(document.getElementById("hypertea-agent-tools")).toBeNull();
+  });
+
+  test("multiple programs share discovery and remove only their own tools", async () => {
+    const native = installBrowser();
+    const first = mountAsyncCounter();
+    const second = mountAsyncCounter(["other_save"]);
+    const agent = required(window.hyperteaAgent);
+    expect(agent.getTools().map((tool) => tool.name)).toEqual(["save", "other_save"]);
+    first.mounted.stop();
+    expect(window.hyperteaAgent).toBe(agent);
+    expect(agent.getTools().map((tool) => tool.name)).toEqual(["other_save"]);
+    expect([...native.keys()]).toEqual(["other_save"]);
+    const result = agent.executeTool("other_save", { amount: 6 });
+    second.mounted.dispatch({ ...required(second.saves[0]), type: "saved", status: "applied" });
+    expect(await result).toEqual({ status: "applied", count: 6 });
+    second.mounted.stop();
+    expect(window.hyperteaAgent).toBeUndefined();
+    expect(agent.getTools()).toEqual([]);
+  });
+
+  test("an empty tool set leaves no agent interface to discover", async () => {
+    const { mounted } = mountAsyncCounter([]);
+    await mounted.settle();
+    expect(window.hyperteaAgent).toBeUndefined();
+    expect(document.getElementById("hypertea-agent-tools")).toBeNull();
+  });
+
+  test("unknown fallback tools are rejected and catalog snapshots cannot change the declarations", async () => {
+    const { saves } = mountAsyncCounter();
+    const agent = required(window.hyperteaAgent);
+    await expect(agent.executeTool("invented", {})).rejects.toThrow("Unknown Hypertea tool");
+    const snapshot = agent.getTools();
+    Reflect.set(required(snapshot[0]), "name", "invented");
+    expect(agent.getTools().map((tool) => tool.name)).toEqual(["save"]);
+    expect(saves).toEqual([]);
+  });
+
+  test("an existing catalog is preserved and blocks fallback publication", async () => {
+    const catalog = document.createElement("script");
+    catalog.id = "hypertea-agent-tools";
+    catalog.type = "application/json";
+    catalog.textContent = "Existing catalog";
+    document.head.append(catalog);
+    const { mounted } = mountAsyncCounter();
+    await mounted.settle();
+    expect(mounted.model().error).toMatch(/already exposed/);
+    expect(window.hyperteaAgent).toBeUndefined();
+    expect(catalog.textContent).toBe("Existing catalog");
+  });
+
+  test("stopping does not delete a global replaced by the host", () => {
+    const { mounted } = mountAsyncCounter();
+    const replacement = { ...required(window.hyperteaAgent) };
+    window.hyperteaAgent = replacement;
+    mounted.stop();
+    expect(window.hyperteaAgent).toBe(replacement);
+    expect(document.getElementById("hypertea-agent-tools")).toBeNull();
+  });
+
+  test("documents without a browser window report unavailable agent exposure", async () => {
+    vi.stubGlobal("document", document.implementation.createHTMLDocument());
+    const { mounted } = mountAsyncCounter();
+    await mounted.settle();
+    expect(mounted.model().error).toMatch(/requires a browser window/);
+  });
+
+  test("native registration failure removes the fallback too", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout"] });
+    installBrowser(() => Promise.reject(new Error("Registration failed")));
+    const { mounted } = mountAsyncCounter();
+    await vi.runAllTimersAsync();
+    expect(mounted.model().error).toMatch(/Registration failed/);
+    expect(window.hyperteaAgent).toBeUndefined();
+    expect(document.getElementById("hypertea-agent-tools")).toBeNull();
+  });
+
+  test.each(["abort", "disable", "stop"] as const)("fallback %s cancels waiting without claiming rollback", async (action) => {
+    const { mounted, saves } = mountAsyncCounter();
+    const agent = required(window.hyperteaAgent);
+    const before = new AbortController();
+    before.abort();
+    await expect(agent.executeTool("save", { amount: 1 }, { signal: before.signal }))
+      .rejects.toMatchObject({ outcome: "cancelled-before-dispatch" });
+    expect(saves).toEqual([]);
+    const abort = new AbortController();
+    const pending = agent.executeTool("save", { amount: 4 }, { signal: abort.signal });
+    const rejected = expect(pending).rejects.toMatchObject({ outcome: "unknown" });
+    switch (action) {
+      case "abort": abort.abort(); break;
+      case "disable": mounted.dispatch({ type: "enable", enabled: false }); break;
+      case "stop": mounted.stop(); break;
+    }
+    await rejected;
+    mounted.dispatch({ ...required(saves[0]), type: "saved", status: "applied" });
+    expect(mounted.model().count).toBe(action === "stop" ? 0 : 4);
+    if (action !== "abort") expect(window.hyperteaAgent).toBeUndefined();
+  });
+
   test("human and tool actions share an update and tools reply after rendering", async () => {
     const tools = installBrowser();
     type Msg =
@@ -153,12 +289,12 @@ describe("WebMCP program integration", () => {
     expect(tools.size).toBe(0);
   });
 
-  test("async outcomes match the invocation, not the next render or completion", async () => {
-    const tools = installBrowser();
+  test.each(["native", "fallback"] as const)("%s outcomes match the invocation, not the next render or completion", async (transport) => {
+    const tools = transport === "native" ? installBrowser() : undefined;
     const { mounted, node, saves } = mountAsyncCounter();
-    const tool = required(tools.get("save"));
-    const first = tool.execute({ amount: 4 }, { signal: new AbortController().signal });
-    const second = tool.execute({ amount: 8 }, { signal: new AbortController().signal });
+    const execute = tools === undefined ? required(window.hyperteaAgent).executeTool.bind(undefined, "save") : required(tools.get("save")).execute;
+    const first = execute({ amount: 4 }, { signal: new AbortController().signal });
+    const second = execute({ amount: 8 }, { signal: new AbortController().signal });
     let firstResolved = false;
     void first.then(() => { firstResolved = true; });
     await mounted.settle();
@@ -244,24 +380,45 @@ describe("WebMCP program integration", () => {
     expect(tools.size).toBe(1);
   });
 
-  test("unsupported browsers retain ordinary program behavior", async () => {
+  test("browsers without WebMCP retain ordinary program behavior and expose the fallback", async () => {
     const { mounted, node } = mountAsyncCounter();
+    expect(window.hyperteaAgent?.getTools().map((tool) => tool.name)).toEqual(["save"]);
     mounted.dispatch({ type: "enable", enabled: false });
     await mounted.settle();
     expect(node.textContent).toBe("0");
     expect(mounted.model().error).toBe("");
   });
 
-  test("validation and application errors reject instead of leaving a pending call", async () => {
-    const tools = installBrowser();
+  test.each(["native", "fallback"] as const)("%s validation and application errors reject instead of leaving a pending call", async (transport) => {
+    const tools = transport === "native" ? installBrowser() : undefined;
     const { mounted, saves } = mountAsyncCounter();
-    const tool = required(tools.get("save"));
+    const execute = tools === undefined ? required(window.hyperteaAgent).executeTool.bind(undefined, "save") : required(tools.get("save")).execute;
     const signal = new AbortController().signal;
-    await expect(tool.execute({ amount: "bad" }, { signal })).rejects.toThrow("Expected a finite amount");
-    await expect(tool.execute({ amount: -1 }, { signal })).rejects.toThrow("Application failure");
-    await expect(tool.execute({ amount: 13 }, { signal })).rejects.toThrow("WebMCP dispatch failed");
+    await expect(execute({ amount: "bad" }, { signal })).rejects.toThrow("Expected a finite amount");
+    await expect(execute({ amount: -1 }, { signal })).rejects.toThrow("Application failure");
+    await expect(execute({ amount: 13 }, { signal })).rejects.toThrow("WebMCP dispatch failed");
     expect(saves).toEqual([]);
     expect(mounted.model().count).toBe(0);
+  });
+
+  test("fallback discovery follows replacement and captured agents cannot execute after removal", async () => {
+    const { mounted, saves } = mountAsyncCounter();
+    const old = required(window.hyperteaAgent);
+    const pending = old.executeTool("save", { amount: 2 });
+    const rejected = expect(pending).rejects.toMatchObject({ outcome: "unknown" });
+    mounted.dispatch({ type: "replaceTools" });
+    await rejected;
+    expect(old.getTools()).toEqual([]);
+    await expect(old.executeTool("save", { amount: 1 })).rejects.toThrow("Unknown Hypertea tool");
+    const current = required(window.hyperteaAgent);
+    expect(current.getTools().map((tool) => tool.name)).toEqual(["save_alternate"]);
+    expect(document.getElementById("hypertea-agent-tools")?.textContent).toContain('"name":"save_alternate"');
+    const result = current.executeTool("save_alternate", { amount: 7 });
+    mounted.dispatch({ ...required(saves[0]), type: "saved", status: "applied" });
+    mounted.dispatch({ ...required(saves[1]), type: "saved", status: "applied" });
+    expect(await result).toEqual({ status: "applied", count: 7 });
+    mounted.stop();
+    expect(current.getTools()).toEqual([]);
   });
 
   test("replacing tools cancels old calls and rejects old callbacks", async () => {
@@ -319,11 +476,13 @@ describe("WebMCP program integration", () => {
     const tools = installBrowser();
     const first = mountAsyncCounter();
     const original = required(tools.get("save"));
+    // An unrelated integration owns this native name outside Hypertea.
+    tools.set("occupied", { ...original, name: "occupied" });
     type Msg = Readonly<{ type: "registrationFailed"; error: string; }>;
     const bridge = createWebMCP<Msg>({
       onRegistrationError: (error) => ({ type: "registrationFailed", error: String(error) }),
     });
-    const declarations = ["other", "save"].map((name) => defineWebMCPTool({
+    const declarations = ["other", "occupied"].map((name) => defineWebMCPTool({
       name, description: "Registration test", inputSchema: { type: "object" },
       parseInput: (input: unknown) => input,
       toMessage: (): Msg => ({ type: "registrationFailed", error: "Unused" }),
@@ -340,7 +499,8 @@ describe("WebMCP program integration", () => {
     stops.push(mounted.stop);
     await vi.runAllTimersAsync();
     expect(mounted.model()).toBe("Error: Duplicate tool");
-    expect([...tools.keys()]).toEqual(["save"]);
+    expect([...tools.keys()]).toEqual(["save", "occupied"]);
+    expect(window.hyperteaAgent?.getTools().map((tool) => tool.name)).toEqual(["save"]);
     expect(tools.get("save")).toBe(original);
     expect(first.mounted.model().error).toBe("");
   });
