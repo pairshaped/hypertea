@@ -12,6 +12,12 @@ Hypertea treats effects and subscriptions as managed runtime concepts.
 
 Subscriptions are declared from model state as `ProgramSubscription<Msg>` values. The runtime starts, preserves, restarts, and stops subscriptions as state changes.
 
+Subscription callbacks receive a context with `settle()`. It waits for the
+render scheduled by the current dispatch, including when called during initial
+subscription setup. It does not wait for network or other effects. The optional
+[WebMCP adapter](0008-webmcp-program-integration.md) uses it to deliver explicit
+operation completions after the corresponding UI update has rendered.
+
 Ordinary application code can request effects from `update`, but it should not execute unmanaged browser or network side effects directly. Subscriptions use the same boundary: a subscription can listen to a browser or external event, but the behavior is declared through Hypertea and dispatches typed messages.
 
 ## Effect Boundary

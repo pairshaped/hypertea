@@ -10,6 +10,10 @@ export default tseslint.config(
     ignores: ["benchmark/", "coverage/", "dist/", "node_modules/", "eslint.config.js"],
   },
   js.configs.recommended,
+  {
+    files: ["bin/**/*.mjs"],
+    languageOptions: { globals: { console: "readonly" } },
+  },
   ...tseslint.configs.strictTypeChecked.map((config) => ({ ...config, files: typedFiles })),
   ...tseslint.configs.stylisticTypeChecked.map((config) => ({ ...config, files: typedFiles })),
   {

@@ -18,8 +18,10 @@ This is not meant to become a broad SPA framework. It exists for small interacti
 
 Applications use the package exports declared in `package.json`: the low-level
 runtime, the canonical program API, browserless testing helpers, and the ESLint
-purity configuration. `src/index.ts`, `src/program.ts`, and `src/testing.ts`
-own those interfaces. Benchmark and test internals are not public API.
+purity configuration. The optional `@pairshaped/hypertea/webmcp` export connects
+declared browser tools to ordinary program messages and completion effects.
+`src/index.ts`, `src/program.ts`, `src/testing.ts`, and `src/webmcp.ts` own those
+interfaces. Benchmark and test internals are not public API.
 
 ## Status
 
@@ -110,6 +112,13 @@ pnpm run bench
 ```
 
 `pnpm run check` is the command to run before handing work back.
+
+`pnpm --filter @pairshaped/hypertea test:webmcp`, from the repository root, runs
+the optional native WebMCP smoke test through the globally installed
+`playwright-cli` and Chrome. It opens a headless browser, serves only the local
+example and compiled library, saves screenshots under the system temporary
+directory, and closes its server and browser. Finish other Playwright sessions
+first. The normal check stays browserless.
 
 `pnpm run bench` builds Hypertea and compares its DOM patching against Hyperapp in jsdom. Treat the numbers as regression signals and optimization guidance, not browser parity proof.
 
@@ -218,6 +227,23 @@ await mounted.settle()
 
 The lower-level `app()` API remains available from the package root for runtime internals and benchmarks. Application code should import from `@pairshaped/hypertea/program`, which exposes the typed program APIs without low-level dispatch or magic no-effect values.
 
+## WebMCP
+
+WebMCP tools are an optional input to the same running program. A tool validates
+input, dispatches an ordinary application message with an invocation ID, and
+waits for a `webmcp.complete` effect carrying that ID. Human actions can use the
+same message without an invocation ID. The bridge does not run a separate
+request path or infer success from rendering or a loading flag.
+
+Registration is a managed subscription. Removing it cancels pending callers and
+unregisters the tools. Completion is a managed effect that waits for rendering
+before replying. Unsupported browsers keep the ordinary UI.
+
+Read the [application integration guide](docs/webmcp.md) for typed usage,
+asynchronous outcomes, cancellation, and the exact browser compatibility tested.
+The [native example](test/webmcp.html) exercises both local and simulated async
+actions.
+
 ## Non-Goals
 
 - No whole-app router.
@@ -235,6 +261,7 @@ The lower-level `app()` API remains available from the package root for runtime 
 - [0005: DOM Patching Performance](docs/adr/0005-dom-patching-performance.md)
 - [0006: Browserless Program Testing](docs/adr/0006-browserless-program-testing.md)
 - [0007: Field Value Ownership After Mount](docs/adr/0007-field-value-ownership.md)
+- [0008: WebMCP Uses Program Messages and Completion Effects](docs/adr/0008-webmcp-program-integration.md)
 
 ## Source ownership
 

@@ -765,10 +765,11 @@ describe("TEA island runtime", () => {
 
   test("provides generic browser subscriptions", async () => {
     const messages: Array<unknown> = [];
+    const context = { settle: () => Promise.resolve() };
 
     const stopEvery = every(10, () => ({ type: "tick" })).subscribe((message) => {
       messages.push(message);
-    });
+    }, context);
     await vi.advanceTimersByTimeAsync(10);
     stopEvery();
     await vi.advanceTimersByTimeAsync(10);
@@ -776,12 +777,12 @@ describe("TEA island runtime", () => {
     type KeyboardMsg = Readonly<{ type: "keyPressed"; key: string }>;
     const stopKeys = keyPressed<KeyboardMsg>((key) => ({ type: "keyPressed", key })).subscribe((message) => {
       messages.push(message);
-    });
+    }, context);
     // @ts-expect-error Keyboard subscription payloads must match the program's message type.
     const invalidKeySubscription = keyPressed<KeyboardMsg>((key) => ({ type: "keyPressed", key: key.length }));
     const stopInvalidKeys = invalidKeySubscription.subscribe((message) => {
       messages.push(message);
-    });
+    }, context);
     globalThis.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" }));
     stopKeys();
     stopInvalidKeys();
@@ -790,6 +791,7 @@ describe("TEA island runtime", () => {
       (message) => {
         messages.push(message);
       },
+      context,
     );
     await vi.advanceTimersByTimeAsync(0);
     stopResize();
@@ -842,6 +844,28 @@ describe("TEA island runtime", () => {
     await flushRender();
 
     expect(requireElement("span").textContent).toBe("1");
+  });
+
+  test("subscriptions can await the first render during initialization", async () => {
+    const node = appendMount("<span></span>");
+    let settled: Promise<void> | undefined;
+    const handle = start<number, { type: "unused"; }, never>({
+      node,
+      init: () => [7, []],
+      update: (model) => [model, []],
+      view: (model) => h("span", {}, String(model)),
+      subscriptions: () => [{
+        key: "initial-render",
+        subscribe: (_dispatch, context) => {
+          settled = context.settle();
+          return () => undefined;
+        },
+      }],
+    });
+    await flushRender();
+    await settled;
+    expect(node.textContent).toBe("7");
+    handle.stop();
   });
 
   test("exposes model, dispatch, settlement, and idempotent cleanup", async () => {

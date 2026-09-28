@@ -203,7 +203,12 @@ export type Transition<Model, Effect extends ProgramEffect> = readonly [
 
 export type ProgramSubscriber<Msg extends ProgramMsg> = (
   dispatch: (message: Msg) => void,
+  context: SubscriptionContext,
 ) => Unsubscribe;
+
+export type SubscriptionContext = Readonly<{
+  settle: () => Promise<void>;
+}>;
 
 export type ProgramSubscription<Msg extends ProgramMsg> = Readonly<{
   key: string;
@@ -622,9 +627,19 @@ export function start<Model, Msg extends ProgramMsg, Effect extends ProgramEffec
     dispatch,
     subscription,
   ) => {
-    return subscription.subscribe((message) => {
-      dispatch(dispatchMessage, message);
-    });
+    return subscription.subscribe(
+      (message) => {
+        dispatch(dispatchMessage, message);
+      },
+      {
+        settle: async () => {
+          // Subscriptions start during createApp. Let initialization and the
+          // dispatch that requested settlement finish scheduling their render.
+          await Promise.resolve();
+          await controller.settle();
+        }
+      },
+    );
   };
 
   const toSubscriptionTuple = (

@@ -19,6 +19,10 @@
       "types": "./dist/testing.d.ts",
       "import": "./dist/testing.js"
     },
+    "./webmcp": {
+      "types": "./dist/webmcp.d.ts",
+      "import": "./dist/webmcp.js"
+    },
     "./eslint": {
       "types": "./eslint-purity.d.ts",
       "import": "./eslint-purity.js"
@@ -38,6 +42,7 @@
     "lint": "eslint .",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
+    "test:webmcp": "pnpm run build && node bin/test-webmcp.mjs",
     "typecheck": "tsc --noEmit"
   },
   "keywords": [

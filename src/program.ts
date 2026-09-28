@@ -39,6 +39,7 @@ export {
   type ProgramSubscriber,
   type ProgramSubscription,
   type Runtime,
+  type SubscriptionContext,
   type Transition,
   type TypedH,
   type VNode,

@@ -28,7 +28,7 @@ Hypertea does not provide its own selector, event, or assertion language.
 - Rust application tests cover authorization, persistence, transactions, server validation, and generated transport contracts.
 - Manual browser checks cover CSS layout, pointer geometry, native drag behavior, focus quirks, and other behavior that JSDOM cannot prove.
 
-The automated suite does not install or start Playwright, Chromium, or another
+The default automated suite does not install or start Playwright, Chromium, or another
 browser. State transitions, validation, rendering, keyboard behavior, effect
 ordering, and stale response handling belong in Node or JSDOM tests. A test that
 starts a browser for behavior those layers can prove is at the wrong boundary.
@@ -48,3 +48,8 @@ decision backed by a concrete regression that cannot be represented through the
 production `Program` in Node or JSDOM.
 
 Every complex island exports its canonical program. A separate test-only program definition is not allowed because it can drift from production behavior.
+
+The optional native WebMCP smoke test is the exception recorded in
+[0008: WebMCP Uses Program Messages and Completion Effects](0008-webmcp-program-integration.md).
+It proves browser registration, invocation and cleanup that JSDOM cannot
+implement. Application behavior remains in the default browserless suite.

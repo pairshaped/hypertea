@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="icon" href="data:,">
+    <title>Hypertea WebMCP example</title>
+    <style>
+      body { font: 18px/1.5 system-ui, sans-serif; background: #f4f5f0; color: #172a25; margin: 4rem auto; max-width: 760px; padding: 0 2rem; }
+      main { background: white; border: 1px solid #d3ddd7; border-radius: 16px; padding: 2rem; }
+      h1 { font-size: 2rem; margin: 0; }
+      h2 { font-size: 1rem; margin-bottom: 0; }
+      output { display: block; font-size: 4rem; font-weight: 650; }
+      button { font: inherit; border: 1px solid #175d48; border-radius: 7px; padding: .5rem 1rem; margin: .25rem .5rem .25rem 0; background: white; color: #175d48; cursor: pointer; }
+      p { margin: .75rem 0; }
+      .error { color: #a12525; }
+    </style>
+  </head>
+  <body>
+    <main id="app"></main>
+    <p><button id="stop">Stop program</button></p>
+    <script type="module">
+      import { clicked, defineProgram, h, mountProgram } from "../dist/program.js";
+      import { createWebMCP, defineWebMCPTool } from "../dist/webmcp.js";
+
+      // This entry module owns browser plumbing and the effect interpreter.
+      // Real applications keep their existing program and interpreter.
+      const bridge = createWebMCP({
+        onRegistrationError: (error) => ({ type: "registrationFailed", error: String(error) }),
+      });
+      const tools = [defineWebMCPTool({
+        name: "add_counter",
+        description: "Add between 1 and 10 to the visible counter",
+        inputSchema: {
+          type: "object",
+          properties: { amount: { type: "integer", minimum: 1, maximum: 10 } },
+          required: ["amount"],
+          additionalProperties: false,
+        },
+        parseInput: (input) => {
+          if (typeof input !== "object" || input === null || !Number.isInteger(input.amount)) {
+            throw new Error("Expected an integer amount");
+          }
+          return input.amount;
+        },
+        toMessage: (amount, invocation) => ({ type: "add", amount, invocation }),
+      }), defineWebMCPTool({
+        name: "save_counter",
+        description: "Simulate an async save of the visible counter in this example",
+        inputSchema: { type: "object", properties: {}, additionalProperties: false },
+        parseInput: (input) => {
+          if (typeof input !== "object" || input === null || Object.keys(input).length !== 0) {
+            throw new Error("Expected an empty object");
+          }
+          return input;
+        },
+        toMessage: (_input, invocation) => ({ type: "save", invocation }),
+      })];
+
+      const program = defineProgram({
+        init: (native) => [{ count: 0, saved: "Nothing saved", enabled: true, error: "", native }, []],
+        update: (model, message) => {
+          switch (message.type) {
+            case "add": {
+              const valid = message.amount >= 1 && message.amount <= 10;
+              const count = valid ? model.count + message.amount : model.count;
+              return [{ ...model, count }, message.invocation === undefined ? [] : [{
+                type: "webmcp.complete", invocation: message.invocation,
+                result: { status: valid ? "applied" : "rejected", count },
+              }]];
+            }
+            case "save": return [model, [{ type: "save", count: model.count, invocation: message.invocation }]];
+            case "saved": return [{ ...model, saved: `Saved ${message.count}` }, message.invocation === undefined ? [] : [{
+              type: "webmcp.complete", invocation: message.invocation,
+              result: { status: "applied", saved: message.count },
+            }]];
+            case "toggleTools": return [{ ...model, enabled: !model.enabled }, []];
+            case "registrationFailed": return [{ ...model, error: message.error }, []];
+          }
+          throw new Error("Unknown message");
+        },
+        view: (model) => h("main", { id: "app" },
+          h("h1", {}, "Hypertea + WebMCP"),
+          h("p", {}, "Buttons and tools use the same messages, update and effects."),
+          h("p", { id: "native" }, model.native ? "Native WebMCP API available" : "WebMCP unavailable; buttons still work"),
+          h("h2", {}, "Counter"),
+          h("output", { id: "count" }, String(model.count)),
+          h("button", { onClick: clicked({ type: "add", amount: 1 }) }, "Add 1"),
+          h("button", { onClick: clicked({ type: "save" }) }, "Simulate save"),
+          h("p", { id: "saved" }, model.saved),
+          h("button", { onClick: clicked({ type: "toggleTools" }) }, model.enabled ? "Disable tools" : "Enable tools"),
+          h("p", { id: "error", class: "error" }, model.error),
+          h("p", {}, "Example only. Saves complete in a promise job; no data leaves this page."),
+        ),
+        subscriptions: (model) => model.enabled ? [bridge.subscription(tools)] : [],
+      });
+      const mounted = mountProgram({
+        node: document.getElementById("app"), flags: document.modelContext !== undefined, program,
+        runEffect: async (dispatch, effect) => {
+          switch (effect.type) {
+            case "webmcp.complete": await bridge.complete(effect); break;
+            case "save":
+              // A real interpreter calls the existing application service here
+              // and carries this invocation through its success/failure message.
+              await Promise.resolve();
+              dispatch({ type: "saved", count: effect.count, invocation: effect.invocation });
+              break;
+          }
+        },
+      });
+      document.getElementById("stop").addEventListener("click", () => {
+        mounted.stop();
+        document.getElementById("stop").textContent = "Program stopped";
+      });
+    </script>
+  </body>
+</html>
