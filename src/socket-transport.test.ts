@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 
 import { createSocketTransport } from "./socket-transport.js";
 
@@ -12,6 +12,11 @@ class FakeSocket extends EventTarget {
   override addEventListener(type: string, callback: EventListenerOrEventListenerObject | null, options?: AddEventListenerOptions | boolean): void {
     if (typeof callback === "function") this.listeners.set(type, callback);
     super.addEventListener(type, callback, options);
+  }
+
+  override removeEventListener(type: string, callback: EventListenerOrEventListenerObject | null, options?: EventListenerOptions | boolean): void {
+    if (this.listeners.get(type) === callback) this.listeners.delete(type);
+    super.removeEventListener(type, callback, options);
   }
 
   send(data: string) {
@@ -130,9 +135,13 @@ describe("socket operation transport", () => {
     const socket = new FakeSocket();
     transport.connect(() => socket.asWebSocket());
     const controller = new AbortController();
-    const pending = transport.request("write", {}, parseNumber, controller.signal);
+    const parse = vi.fn(parseNumber);
+    const pending = transport.request("write", {}, parse, controller.signal);
+    const request = sentRequest(socket, 0);
     controller.abort();
     expect(await pending).toEqual({ status: "unknown", reason: "canceled" });
+    socket.reply({ version: 1, ...request, status: "ok", payload: 10 });
+    expect(parse).not.toHaveBeenCalled();
     expect(transport.pendingCount()).toBe(0);
     transport.stop();
   });
@@ -219,9 +228,17 @@ describe("socket operation transport", () => {
     const replacement = new FakeSocket();
     transport.connect(() => replacement.asWebSocket());
     expect(await pending).toEqual({ status: "unknown", reason: "disconnected" });
-    const final = transport.request("write", {}, parseNumber);
+    const parseAfterStop = vi.fn(parseNumber);
+    const final = transport.request("write", {}, parseAfterStop);
+    const lateMessage = replacement.listeners.get("message");
+    if (lateMessage === undefined) throw new Error("missing message listener");
     transport.stop();
     expect(await final).toEqual({ status: "unknown", reason: "stopped" });
+    expect(replacement.listeners.size).toBe(0);
+    lateMessage(new MessageEvent("message", { data: JSON.stringify({ version: 1, ...sentRequest(replacement, 0), status: "ok", payload: 42 }) }));
+    replacement.reply({ version: 1, ...sentRequest(replacement, 0), status: "ok", payload: 43 });
+    expect(parseAfterStop).not.toHaveBeenCalled();
+    expect(transport.pendingCount()).toBe(0);
     transport.stop();
   });
 });
