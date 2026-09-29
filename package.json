@@ -26,25 +26,32 @@
     "./eslint": {
       "types": "./eslint-purity.d.ts",
       "import": "./eslint-purity.js"
+    },
+    "./webmcp/generate": {
+      "types": "./dist/webmcp-generate.d.ts",
+      "import": "./dist/webmcp-generate.js"
     }
   },
   "files": [
     "dist",
     "eslint-purity.d.ts",
     "eslint-purity.js",
-    "README.md"
+    "README.md",
+    "bin/generate-webmcp.mjs"
   ],
   "scripts": {
     "preinstall": "node -e 'const agent=process.env.npm_config_user_agent??\"\";if(!agent.startsWith(\"pnpm/\")){console.error(\"error: use pnpm for this repository\");process.exit(1)}'",
     "bench": "pnpm run build && node benchmark/dom-patching.mjs",
     "build": "tsc -p tsconfig.build.json",
-    "check": "pnpm run typecheck && pnpm run lint && pnpm run test:coverage && pnpm run build",
+    "check": "pnpm run typecheck && pnpm run lint && pnpm run test:coverage && pnpm run build && pnpm run check:webmcp-example",
     "lint": "eslint .",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
-    "test:webmcp": "pnpm run build && node bin/test-webmcp.mjs",
-    "test:webmcp:fallback": "pnpm run build && node bin/test-webmcp.mjs --fallback",
-    "typecheck": "tsc --noEmit"
+    "test:webmcp": "pnpm run build && pnpm run check:webmcp-example && node bin/test-webmcp.mjs",
+    "test:webmcp:fallback": "pnpm run build && pnpm run check:webmcp-example && node bin/test-webmcp.mjs --fallback",
+    "typecheck": "tsc --noEmit",
+    "generate:webmcp-example": "node bin/generate-webmcp.mjs --project test/tsconfig.webmcp.json --source test/webmcp-tools.ts --output test/webmcp.generated.ts",
+    "check:webmcp-example": "node bin/generate-webmcp.mjs --project test/tsconfig.webmcp.json --source test/webmcp-tools.ts --output test/webmcp.generated.ts --check && tsc -p test/tsconfig.webmcp.json"
   },
   "keywords": [
     "tea",
@@ -64,5 +71,16 @@
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.61.0",
     "vitest": "^4.1.8"
+  },
+  "bin": {
+    "hypertea-webmcp": "./bin/generate-webmcp.mjs"
+  },
+  "peerDependencies": {
+    "typescript": "^6.0.3"
+  },
+  "peerDependenciesMeta": {
+    "typescript": {
+      "optional": true
+    }
   }
 }

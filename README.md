@@ -238,11 +238,35 @@ waits for a `webmcp.complete` effect carrying that ID. Human actions can use the
 same message without an invocation ID. The bridge does not run a separate
 request path or infer success from rendering or a loading flag.
 
+Declare which existing messages agents can send:
+
+```ts
+import { exposeMessages } from "@pairshaped/hypertea/webmcp";
+import schemas from "./webmcp.generated.js";
+
+const mcpTools = exposeMessages<Msg>([
+  { message: "filterProductResults", description: "Filter the visible catalog" },
+  { message: "toggleNavigation", description: "Set open, or omit it to toggle navigation" },
+], schemas);
+```
+
+Each `message` name is checked against `Msg["type"]`. The generator reads
+their payload types and writes the schema sidecar; Hypertea uses those same schemas to validate inputs
+and construct messages. There are no repeated tool names, payload definitions,
+parsers or dispatch mappings. Keep `Msg` organized around application behavior.
+Only allowlisted messages are exposed.
+
+Run `hypertea-webmcp --project tsconfig.json --source webmcp.ts --output
+webmcp.generated.ts` after changing a selected message. Add the same command with
+`--check` to your build or CI to reject stale schemas. Generation requires
+TypeScript 6, `strictNullChecks`, and `exactOptionalPropertyTypes`. It does not run
+application code or include the compiler in the browser bundle.
+
 Registration is a managed subscription. Removing it cancels pending callers and
 unregisters the tools. Completion is a managed effect that waits for rendering
 before replying.
 
-Register once with `bridge.subscription(tools)`. Hypertea publishes both:
+Register once with `bridge.subscription(mcpTools)`. Hypertea publishes both:
 
 - Native tools through `document.modelContext`, when available.
 - `window.hyperteaAgent` and an inert JSON catalog at
@@ -255,7 +279,7 @@ to execute page JavaScript can discover and invoke the tools:
 
 ```js
 window.hyperteaAgent.getTools();
-await window.hyperteaAgent.executeTool("add_counter", { amount: 2 });
+await window.hyperteaAgent.executeTool("add", { amount: 2 });
 ```
 
 The example above calls the counter tool from the integration guide. The catalog

@@ -9,7 +9,24 @@ cannot establish that an asynchronous operation succeeded.
 
 The bridge keeps promises outside the model, correlates each completion, waits
 for rendering before replying, and owns registration teardown. Applications own
-tool metadata, validation, business outcomes and result projections. Removing
+tool descriptions, annotations, business validation, outcomes and result projections.
+`exposeMessages<Msg>` takes an explicit array of `{ message, description }`
+entries, with optional title and annotations, and returns `mcpTools`. Names are
+checked against the existing message union; duplicate entries are rejected.
+Exposure stays outside message payloads: no `mcp` field or custom annotation is
+required. Build-time
+TypeScript inspection generates their JSON input schemas; the runtime validates
+against the same schemas and supplies dispatch and invocation mapping. The
+compiler stays outside browser imports. Builds check the committed sidecar for
+drift. Unsupported types fail generation rather than widening the contract.
+Message unions stay organized by application behavior, not by caller type.
+
+Generation preserves optional properties and union alternatives, excludes the
+root discriminator and invocation ID, and requires an explicit completion field
+on selected messages. It does not infer business rules or outcomes. The manual
+`defineWebMCPTool` adapter is available when a deliberately different tool
+contract or unsupported payload type calls for explicit parsing and mapping.
+ Removing
 the subscription cancels pending callers. Cancellation after dispatch means the
 caller does not know the outcome; it does not roll back application work.
 

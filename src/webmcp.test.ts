@@ -4,6 +4,7 @@ import { clicked, defineProgram, h, mountProgram } from "./program.js";
 import {
   createWebMCP,
   defineWebMCPTool,
+  exposeMessages,
   type WebMCPCompletion,
   type WebMCPInvocation,
   type WebMCPRegisteredTool,
@@ -504,4 +505,35 @@ describe("WebMCP program integration", () => {
     expect(tools.get("save")).toBe(original);
     expect(first.mounted.model().error).toBe("");
   });
+});
+
+
+test("allowlisted messages validate before dispatch and complete through the mounted program", async () => {
+  type Msg = { type: "add"; amount: number; invocation?: WebMCPInvocation } | { type: "failed" };
+  const mcpTools = exposeMessages<Msg>([{ message: "add", description: "Add a number" }], {
+    add: { type: "object", properties: { amount: { type: "number" } }, required: ["amount"], additionalProperties: false },
+  });
+  const bridge = createWebMCP<Msg>({ onRegistrationError: () => ({ type: "failed" }) });
+  const node = document.createElement("output");
+  document.body.append(node);
+  const mounted = mountProgram({
+    node, flags: undefined,
+    program: defineProgram<undefined, number, Msg, WebMCPCompletion>({
+      init: () => [0, []],
+      update: (count, msg) => msg.type === "failed" ? [count, []] : [count + msg.amount,
+      msg.invocation === undefined ? [] : [{ type: "webmcp.complete", invocation: msg.invocation, result: count + msg.amount }]],
+      view: (count) => h("output", {}, String(count)),
+      subscriptions: () => [bridge.subscription(mcpTools)],
+    }),
+    runEffect: (_dispatch, effect) => bridge.complete(effect),
+  });
+  stops.push(mounted.stop);
+  mounted.dispatch({ type: "add", amount: 2 });
+  const agent = required(window.hyperteaAgent);
+  expect(await agent.executeTool("add", { amount: 3 })).toBe(5);
+  expect(node.textContent).toBe("5");
+  for (const input of [{ amount: "3" }, { amount: Infinity }, {}, { amount: 3, invocation: "forged" }, { amount: 3, type: "failed" }]) {
+    await expect(agent.executeTool("add", input)).rejects.toThrow(/Invalid input/);
+  }
+  expect(mounted.model()).toBe(5);
 });

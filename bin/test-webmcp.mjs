@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import ts from "typescript";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { once } from "node:events";
@@ -59,6 +60,12 @@ const files = new Map(await Promise.all([
   content: await readFile(join(packageRoot, path)),
   type: path.endsWith(".html") ? "text/html" : "text/javascript",
 }])));
+for (const source of ["test/webmcp-tools.ts", "test/webmcp.generated.ts"]) {
+  const compiled = ts.transpileModule(await readFile(join(packageRoot, source), "utf8"), {
+    compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+  });
+  files.set(`/${source.replace(/\.ts$/, ".js")}`, { content: compiled.outputText, type: "text/javascript" });
+}
 const server = createServer((request, response) => {
   const file = files.get(request.url);
   if (file === undefined) {
@@ -78,17 +85,17 @@ try {
   if (fallback) {
     const catalog = await evaluate("() => JSON.parse(document.getElementById('hypertea-agent-tools').textContent)");
     assert.equal(catalog.global, "hyperteaAgent");
-    assert.deepEqual(catalog.tools.map(tool => tool.name), ["add_counter", "save_counter"]);
+    assert.deepEqual(catalog.tools.map(tool => tool.name), ["add", "save"]);
   } else {
     const tools = await cli(`-s=${session}`, "webmcp-list");
-    assert.match(tools.result, /add_counter/);
-    assert.match(tools.result, /save_counter/);
+    assert.match(tools.result, /add/);
+    assert.match(tools.result, /save/);
   }
   await cli(`-s=${session}`, "screenshot", `--filename=${join(output, "before.png")}`);
 
   await cli(`-s=${session}`, "click", "text=Add 1");
-  assert.deepEqual(await callTool("add_counter", { amount: 2 }), { status: "applied", count: 3 });
-  assert.deepEqual(await callTool("save_counter", {}), { status: "applied", saved: 3 });
+  assert.deepEqual(await callTool("add", { amount: 2 }), { status: "applied", count: 3 });
+  assert.deepEqual(await callTool("save", {}), { status: "applied", saved: 3 });
   assert.deepEqual(await evaluate(`() => ({
     count: document.querySelector('#count').textContent,
     saved: document.querySelector('#saved').textContent,
@@ -99,7 +106,7 @@ try {
   await cli(`-s=${session}`, "click", "text=Disable tools");
   assert.deepEqual(await toolNames(), []);
   await cli(`-s=${session}`, "click", "text=Enable tools");
-  assert.deepEqual(await toolNames(), ["add_counter", "save_counter"]);
+  assert.deepEqual(await toolNames(), ["add", "save"]);
   await cli(`-s=${session}`, "click", "text=Stop program");
   assert.deepEqual(await toolNames(), []);
   if (fallback) assert.equal(await evaluate("() => document.getElementById('hypertea-agent-tools') === null"), true);

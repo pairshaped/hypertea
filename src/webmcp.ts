@@ -40,6 +40,14 @@ export type WebMCPToolMetadata = Readonly<{
   }>;
 }>;
 
+/** JSON input subset emitted by the message generator. */
+export type WebMCPInputSchema =
+  | Readonly<{ type: "string" | "number" | "boolean" | "null" }>
+  | Readonly<{ const: string | number | boolean }>
+  | Readonly<{ anyOf: ReadonlyArray<WebMCPInputSchema>; type?: "object" }>
+  | Readonly<{ type: "array"; items: WebMCPInputSchema }>
+  | Readonly<{ type: "object"; properties: Readonly<Record<string, WebMCPInputSchema>>; required: ReadonlyArray<string>; additionalProperties: false }>;
+
 export type WebMCPTool<Msg extends ProgramMsg> = WebMCPToolMetadata & Readonly<{
   toMessage: (input: unknown, invocation: WebMCPInvocation) => Msg;
 }>;
@@ -140,6 +148,57 @@ export function defineWebMCPTool<Input, Msg extends ProgramMsg>(
     ...metadata,
     toMessage: (input, invocation) => toMessage(parseInput(input), invocation),
   };
+}
+
+export type WebMCPMessages<Msg extends ProgramMsg> = ReadonlyArray<Readonly<{ message: Msg["type"] }> & Omit<WebMCPToolMetadata, "name" | "inputSchema">>;
+
+/** Select existing messages. Generate the second argument from this declaration at build time. */
+export function exposeMessages<Msg extends ProgramMsg>(
+  messages: WebMCPMessages<Msg>,
+  schemas: Readonly<Record<string, WebMCPInputSchema>>,
+): ReadonlyArray<WebMCPTool<Msg>> {
+  if (new Set(messages.map((entry) => entry.message)).size !== messages.length) throw new Error("Duplicate WebMCP message declaration");
+  if (messages.length !== Object.keys(schemas).length) throw new Error("Stale WebMCP schemas: regenerate the message declarations");
+  return messages.map(({ message: name, ...metadata }) => {
+    const inputSchema = Object.hasOwn(schemas, name) ? schemas[name] : undefined;
+    if (inputSchema === undefined) throw new Error(`Missing WebMCP declaration or schema: ${name}`);
+    return defineWebMCPTool({
+      ...metadata, name, inputSchema,
+      parseInput: (input: unknown) => {
+        if (!matchesInput(inputSchema, input)) throw new Error(`Invalid input for ${name}`);
+        // Copy the JSON payload so the fallback caller cannot mutate a dispatched message.
+        const copy: unknown = JSON.parse(JSON.stringify(input));
+        // A JavaScript caller can supply getters that change during copying.
+        if (!matchesInput(inputSchema, copy)) throw new Error(`Invalid input for ${name}`);
+        return copy as Record<string, unknown>;
+      },
+      // The generator proves the schema against Msg. These reserved fields are
+      // never input properties, and are written last even for an invalid sidecar.
+      toMessage: (input, invocation) => ({ ...input, type: name, invocation }) as unknown as Msg,
+    });
+  });
+}
+
+function matchesInput(schema: WebMCPInputSchema, input: unknown): boolean {
+  if ("anyOf" in schema) return schema.anyOf.some((variant) => matchesInput(variant, input));
+  if ("const" in schema) return input === schema.const;
+  switch (schema.type) {
+    case "string": return typeof input === "string";
+    case "number": return typeof input === "number" && Number.isFinite(input);
+    case "boolean": return typeof input === "boolean";
+    case "null": return input === null;
+    case "array": return Array.isArray(input) && Array.from(input as Array<unknown>).every((item) => matchesInput(schema.items, item));
+    case "object": {
+      if (typeof input !== "object" || input === null || Array.isArray(input)) return false;
+      const prototype: unknown = Object.getPrototypeOf(input);
+      if (prototype !== Object.prototype && prototype !== null) return false;
+      if (Object.getOwnPropertySymbols(input).length !== 0) return false;
+      const record = input as Record<string, unknown>;
+      return schema.required.every((key) => Object.hasOwn(record, key))
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- Own-key check establishes the schema property.
+        && Object.keys(record).every((key) => Object.hasOwn(schema.properties, key) && matchesInput(schema.properties[key]!, record[key]));
+    }
+  }
 }
 
 export type WebMCPBridge<Msg extends ProgramMsg> = Readonly<{

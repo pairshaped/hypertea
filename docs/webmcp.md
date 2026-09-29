@@ -19,10 +19,12 @@ dispatch `add`; only the tool supplies an invocation ID.
 import { clicked, defineProgram, h, mountProgram } from "@pairshaped/hypertea/program";
 import {
   createWebMCP,
-  defineWebMCPTool,
+  exposeMessages,
   type WebMCPCompletion,
   type WebMCPInvocation,
 } from "@pairshaped/hypertea/webmcp";
+
+import schemas from "./webmcp.generated.js";
 
 type Model = Readonly<{ count: number; error: string }>;
 type Msg =
@@ -35,25 +37,9 @@ function createCounter() {
       type: "toolRegistrationFailed", error: String(error),
     }),
   });
-  const tools = [defineWebMCPTool({
-    name: "add_counter",
-    description: "Add an integer to the visible counter",
-    inputSchema: {
-      type: "object",
-      properties: { amount: { type: "integer" } },
-      required: ["amount"],
-      additionalProperties: false,
-    },
-    parseInput: (input: unknown): number => {
-      if (typeof input !== "object" || input === null ||
-          !("amount" in input) || typeof input.amount !== "number" ||
-          !Number.isSafeInteger(input.amount)) {
-        throw new Error("Expected an integer amount");
-      }
-      return input.amount;
-    },
-    toMessage: (amount, invocation): Msg => ({ type: "add", amount, invocation }),
-  })];
+  const mcpTools = exposeMessages<Msg>([
+    { message: "add", description: "Add a finite number to the visible counter" },
+  ], schemas);
   const program = defineProgram<undefined, Model, Msg, WebMCPCompletion>({
     init: () => [{ count: 0, error: "" }, []],
     update: (model, message) => {
@@ -74,7 +60,7 @@ function createCounter() {
       h("button", { onClick: clicked<Msg>({ type: "add", amount: 1 }) }, String(model.count)),
       h("p", {}, model.error),
     ),
-    subscriptions: () => [bridge.subscription(tools)],
+    subscriptions: () => [bridge.subscription(mcpTools)],
   });
   return { program, bridge };
 }
@@ -89,10 +75,59 @@ const mounted = mountProgram({
 // The host calls mounted.stop() when it removes this program.
 ```
 
-`inputSchema` describes the tool to the browser. `parseInput` validates the
-untrusted input and returns a typed value for `toMessage`. Keep those two in
-agreement. Application business validation still belongs in the shared action
-path. Throwing from validation rejects the tool call before dispatch.
+Save the example as `counter.ts`, then generate its sidecar:
+
+```sh
+pnpm exec hypertea-webmcp --project tsconfig.json --source counter.ts --output webmcp.generated.ts
+```
+
+Commit the generated file. Run the same command with `--check` before bundling
+and in CI. That check fails if the selected message names or shapes have changed;
+a normal TypeScript check alone cannot detect a stale schema. The generator reads
+types without importing or executing your entry module, so the first generation
+works before the sidecar exists. TypeScript must also check your application in
+the normal build. In this monorepo, build Hypertea first and invoke
+`node packages/hypertea/bin/generate-webmcp.mjs` from the repository root with
+repository-relative paths. Installed consumers can use the package's
+`hypertea-webmcp` command.
+
+The allowlist must be a literal array of objects in exactly one `exposeMessages<Msg>` call
+per source file. Each entry has a literal `message` name and a string
+`description`, with optional `title` and `annotations`. TypeScript checks names
+against `Msg["type"]`; renames, removed messages and typos become compile errors.
+Duplicate messages fail generation and runtime declaration. Imported aliases for
+`exposeMessages` work. Metadata values can be expressions; entries cannot use
+spreads, shorthand fields, or computed property names. Descriptions and annotations stay
+explicit because the compiler cannot infer an action's purpose or consequences.
+
+Generation requires TypeScript 6 and both `strictNullChecks` (or `strict`) and
+`exactOptionalPropertyTypes`. Supported inputs are strings, finite numbers,
+booleans, JSON null, literals, readonly arrays, finite unions, and nested objects
+with known properties. Aliases, readonly wrappers, mapped finite records and
+object intersections are resolved by TypeScript. Optional properties remain
+optional. Objects reject extra properties. Unsupported or unresolved types fail
+generation: `any`, `unknown`, functions, classes, tuples, recursive shapes, open
+index signatures, branded payload scalars, and non-JSON values. A required
+`undefined` input fails generation too; JSON cannot represent it.
+
+Every selected message must declare `invocation: WebMCPInvocation` or
+`invocation?: WebMCPInvocation`. Hypertea supplies it. Neither `type` nor
+`invocation` appears in the root input schema, and callers cannot provide them.
+Nested properties with those names remain ordinary data. Input is copied before
+dispatch so a fallback caller cannot mutate a queued message afterward.
+
+The schema describes the actual message shape. A union of `{ path: string }`
+and `{ choices: readonly string[] }` exposes both forms. An optional `open`
+property stays optional. Review the whole selected message before exposing it.
+Business rules such as allowed choices, limits, confirmation and authorization
+belong in the shared application workflow. TypeScript's `number` does not imply
+an integer, a range or a price rule.
+
+`defineWebMCPTool` remains available for a deliberate adapter whose tool contract
+differs from an application message, or a payload type the generator cannot
+support. In that case, you own `inputSchema`, `parseInput` and `toMessage` and
+must keep them in agreement. Do not keep a handwritten declaration alongside a
+generated declaration for the same tool.
 
 The optional `title` and `annotations` fields pass through to WebMCP.
 Annotations support `readOnlyHint`, `untrustedContentHint`, `consequentialHint`
