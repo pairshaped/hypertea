@@ -75,6 +75,7 @@ describe("socket operation transport", () => {
     const socket = new FakeSocket();
     transport.connect(() => socket.asWebSocket());
     expect(await transport.request("bad name", {}, parseNumber)).toEqual({ status: "not-dispatched", reason: "invalid-request" });
+    expect(await transport.request("BadName", {}, parseNumber)).toEqual({ status: "not-dispatched", reason: "invalid-request" });
     expect(await transport.request("read", { text: "x".repeat(300) }, parseNumber)).toEqual({ status: "not-dispatched", reason: "invalid-request" });
     const pending = transport.request("read", {}, parseNumber);
     expect(await transport.request("other", {}, parseNumber)).toEqual({ status: "not-dispatched", reason: "busy" });

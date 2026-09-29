@@ -93,7 +93,7 @@ export function createSocketTransport(options: Readonly<{ maxPending?: number; m
       const activeSocket = socket;
       if (activeSocket?.readyState !== 1) return Promise.resolve({ status: "not-dispatched", reason: "unavailable" });
       if (pending.size >= maxPending) return Promise.resolve({ status: "not-dispatched", reason: "busy" });
-      if (!/^[A-Za-z][A-Za-z0-9]{0,63}$/.test(operation) || payload === undefined || nextRequestId === Number.MAX_SAFE_INTEGER) {
+      if (!/^[a-z][A-Za-z0-9]{0,63}$/.test(operation) || payload === undefined || nextRequestId === Number.MAX_SAFE_INTEGER) {
         return Promise.resolve({ status: "not-dispatched", reason: "invalid-request" });
       }
       const requestId = ++nextRequestId;
