@@ -23,6 +23,38 @@ declared browser tools to ordinary program messages and completion effects.
 `src/index.ts`, `src/program.ts`, `src/testing.ts`, and `src/webmcp.ts` own those
 interfaces. Benchmark and test internals are not public API.
 
+The optional `@pairshaped/hypertea/socket-transport` export owns one WebSocket
+connection, request correlation, response parsing and cleanup. Applications own
+the socket URL, credentials, operation contracts, retry decisions and visible
+failure state. It is not imported by the core runtime or WebMCP adapter.
+
+```ts
+import { createSocketTransport } from "@pairshaped/hypertea/socket-transport";
+import { publicOperationSocketPath, publicRouteLoadOperation } from "./generated/client/public_app";
+
+const transport = createSocketTransport();
+const socket = new WebSocket(new URL(publicOperationSocketPath, location.href).href.replace(/^http/, "ws"));
+transport.connect(() => socket);
+socket.addEventListener("open", async () => {
+  const result = await transport.request(
+    publicRouteLoadOperation.identity,
+    { path: "/contact" },
+    publicRouteLoadOperation.parseResponse,
+  );
+  if (result.status === "applied") showDocument(result.value);
+  else if (result.status === "unknown") reloadNavigationFromHttp();
+});
+// Call transport.stop() when the owning island unmounts.
+```
+
+`not-dispatched` means no frame was sent; `unknown` means the server might have
+acted. Never replay a mutation after `unknown`. A navigation read may recover
+through its existing HTTP document GET, once, using the current route and
+session. Reconnecting creates a new generation and never replays pending work.
+Cancellation after send returns `unknown`; cancellation before send returns
+`not-dispatched`. Always call `stop()` on unmount to close the socket and settle
+pending requests. A caller may create a fresh transport for a remount.
+
 ## Status
 
 The runtime exposes:

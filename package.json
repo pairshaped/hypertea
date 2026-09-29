@@ -23,6 +23,10 @@
       "types": "./dist/webmcp.d.ts",
       "import": "./dist/webmcp.js"
     },
+    "./socket-transport": {
+      "types": "./dist/socket-transport.d.ts",
+      "import": "./dist/socket-transport.js"
+    },
     "./eslint": {
       "types": "./eslint-purity.d.ts",
       "import": "./eslint-purity.js"
