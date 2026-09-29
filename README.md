@@ -50,10 +50,17 @@ socket.addEventListener("open", async () => {
 `not-dispatched` means no frame was sent; `unknown` means the server might have
 acted. Never replay a mutation after `unknown`. A navigation read may recover
 through its existing HTTP document GET, once, using the current route and
-session. Reconnecting creates a new generation and never replays pending work.
+session. Reconnecting replaces the socket and never replays pending work.
 Cancellation after send returns `unknown`; cancellation before send returns
 `not-dispatched`. Always call `stop()` on unmount to close the socket and settle
 pending requests. A caller may create a fresh transport for a remount.
+
+The operation wire format is version 2. A request carries `version`,
+`requestId`, `operation` and `payload`; a reply carries `version`, `requestId`,
+`status` and either `payload` or `error`. The transport increments `requestId`
+across reconnects within one mount and ignores callbacks from replaced sockets.
+Version 1 or malformed replies close the socket. A public document read may
+then recover through HTTP; a mutation must never be replayed automatically.
 
 ## Status
 

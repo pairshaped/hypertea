@@ -25,7 +25,6 @@ export function createSocketTransport(options: Readonly<{ maxPending?: number; m
   }
 
   let socket: WebSocket | undefined;
-  let generation = 0;
   let nextRequestId = 0;
   let stopped = false;
   let removeListeners: (() => void) | undefined;
@@ -51,10 +50,8 @@ export function createSocketTransport(options: Readonly<{ maxPending?: number; m
       let nextSocket: WebSocket;
       try { nextSocket = createSocket(); } catch { return false; }
       socket = nextSocket;
-      generation += 1;
-      const connectionGeneration = generation;
       const onMessage = (event: MessageEvent) => {
-        if (socket !== nextSocket || generation !== connectionGeneration) return;
+        if (socket !== nextSocket) return;
         if (typeof event.data !== "string" || bytes(event.data) > maxFrameBytes) {
           detach("invalid-envelope");
           return;
@@ -63,12 +60,11 @@ export function createSocketTransport(options: Readonly<{ maxPending?: number; m
         try { value = JSON.parse(event.data); } catch { detach("invalid-envelope"); return; }
         if (typeof value !== "object" || value === null || Array.isArray(value)) { detach("invalid-envelope"); return; }
         const reply = value as Record<string, unknown>;
-        if (!Number.isSafeInteger(reply.generation) || (reply.generation as number) < 1) { detach("invalid-envelope"); return; }
-        if (reply.generation !== connectionGeneration) return;
-        if (reply.version !== 1 || !Number.isSafeInteger(reply.requestId) || (reply.requestId as number) < 1
+        if (reply.version !== 2 || !Number.isSafeInteger(reply.requestId) || (reply.requestId as number) < 1
           || (reply.status !== "ok" && reply.status !== "error")
-          || (reply.status === "ok" && !Object.hasOwn(reply, "payload"))
-          || (reply.status === "error" && !Object.hasOwn(reply, "error"))) {
+          || (reply.status === "ok" && (!Object.hasOwn(reply, "payload") || Object.hasOwn(reply, "error")))
+          || (reply.status === "error" && (!Object.hasOwn(reply, "error") || Object.hasOwn(reply, "payload")))
+          || Object.keys(reply).some((key) => !["version", "requestId", "status", "payload", "error"].includes(key))) {
           detach("invalid-envelope");
           return;
         }
@@ -98,7 +94,7 @@ export function createSocketTransport(options: Readonly<{ maxPending?: number; m
       }
       const requestId = ++nextRequestId;
       let frame: string;
-      try { frame = JSON.stringify({ version: 1, generation, requestId, operation, payload }); }
+      try { frame = JSON.stringify({ version: 2, requestId, operation, payload }); }
       catch { return Promise.resolve({ status: "not-dispatched", reason: "invalid-request" }); }
       if (bytes(frame) > maxFrameBytes) return Promise.resolve({ status: "not-dispatched", reason: "invalid-request" });
       return new Promise<SocketResult<ReturnType<typeof parse>>>((resolve) => {

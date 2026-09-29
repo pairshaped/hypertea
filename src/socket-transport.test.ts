@@ -44,15 +44,15 @@ function parseNumber(value: unknown): number {
   return value;
 }
 
-function sentRequest(socket: FakeSocket, index: number): { generation: number; requestId: number } {
+function sentRequest(socket: FakeSocket, index: number): { requestId: number } {
   const frame = socket.sent[index];
   if (frame === undefined) throw new Error("missing sent frame");
   const value: unknown = JSON.parse(frame);
-  if (typeof value !== "object" || value === null || !("generation" in value) || !("requestId" in value)
-    || typeof value.generation !== "number" || typeof value.requestId !== "number") {
+  if (typeof value !== "object" || value === null || !("requestId" in value)
+    || typeof value.requestId !== "number" || "generation" in value || !("version" in value) || value.version !== 2) {
     throw new Error("invalid sent frame");
   }
-  return { generation: value.generation, requestId: value.requestId };
+  return { requestId: value.requestId };
 }
 
 describe("socket operation transport", () => {
@@ -65,12 +65,12 @@ describe("socket operation transport", () => {
     const a = sentRequest(socket, 0);
     const b = sentRequest(socket, 1);
 
-    socket.reply({ version: 1, generation: b.generation, requestId: b.requestId, status: "ok", payload: 20 });
-    socket.reply({ version: 1, generation: a.generation, requestId: a.requestId, status: "ok", payload: 10 });
+    socket.reply({ version: 2, requestId: b.requestId, status: "ok", payload: 20 });
+    socket.reply({ version: 2, requestId: a.requestId, status: "ok", payload: 10 });
 
     expect(await first).toEqual({ status: "applied", value: 10 });
     expect(await second).toEqual({ status: "applied", value: 20 });
-    socket.reply({ version: 1, generation: a.generation, requestId: a.requestId, status: "ok", payload: 99 });
+    socket.reply({ version: 2, requestId: a.requestId, status: "ok", payload: 99 });
     expect(transport.pendingCount()).toBe(0);
     transport.stop();
   });
@@ -85,12 +85,12 @@ describe("socket operation transport", () => {
     const pending = transport.request("read", {}, parseNumber);
     expect(await transport.request("other", {}, parseNumber)).toEqual({ status: "not-dispatched", reason: "busy" });
     const request = sentRequest(socket, 0);
-    socket.reply({ version: 1, generation: request.generation, requestId: request.requestId, status: "ok", payload: "wrong" });
+    socket.reply({ version: 2, requestId: request.requestId, status: "ok", payload: "wrong" });
     expect(await pending).toEqual({ status: "unknown", reason: "invalid-response" });
 
     const another = transport.request("read", {}, parseNumber);
     const secondRequest = sentRequest(socket, 1);
-    socket.reply({ version: 1, generation: secondRequest.generation, requestId: secondRequest.requestId, status: "ok" });
+    socket.reply({ version: 2, requestId: secondRequest.requestId, status: "ok" });
     expect(await another).toEqual({ status: "unknown", reason: "invalid-envelope" });
     expect(socket.closed).toBe(true);
 
@@ -118,10 +118,10 @@ describe("socket operation transport", () => {
     transport.connect(() => next.asWebSocket());
     const read = transport.request("read", {}, parseNumber);
     const nextRequest = sentRequest(next, 0);
-    old.reply({ version: 1, generation: oldRequest.generation, requestId: oldRequest.requestId, status: "ok", payload: 1 });
-    next.reply({ version: 1, generation: oldRequest.generation, requestId: nextRequest.requestId, status: "ok", payload: 2 });
+    expect(nextRequest.requestId).toBeGreaterThan(oldRequest.requestId);
+    old.reply({ version: 2, requestId: oldRequest.requestId, status: "ok", payload: 1 });
     expect(transport.pendingCount()).toBe(1);
-    next.reply({ version: 1, generation: nextRequest.generation, requestId: nextRequest.requestId, status: "ok", payload: 3 });
+    next.reply({ version: 2, requestId: nextRequest.requestId, status: "ok", payload: 3 });
     expect(await read).toEqual({ status: "applied", value: 3 });
     expect(old.sent).toHaveLength(1);
     transport.stop();
@@ -140,13 +140,13 @@ describe("socket operation transport", () => {
     const request = sentRequest(socket, 0);
     controller.abort();
     expect(await pending).toEqual({ status: "unknown", reason: "canceled" });
-    socket.reply({ version: 1, ...request, status: "ok", payload: 10 });
+    socket.reply({ version: 2, ...request, status: "ok", payload: 10 });
     expect(parse).not.toHaveBeenCalled();
     expect(transport.pendingCount()).toBe(0);
     transport.stop();
   });
 
-  test("queued callbacks from replaced sockets cannot affect the next generation", async () => {
+  test("queued callbacks from replaced sockets cannot affect the next connection", async () => {
     const transport = createSocketTransport();
     const old = new FakeSocket();
     transport.connect(() => old.asWebSocket());
@@ -157,10 +157,10 @@ describe("socket operation transport", () => {
     transport.connect(() => next.asWebSocket());
     const pending = transport.request("read", {}, parseNumber);
     const request = sentRequest(next, 0);
-    oldMessage(new MessageEvent("message", { data: JSON.stringify({ version: 1, ...request, status: "ok", payload: 8 }) }));
+    oldMessage(new MessageEvent("message", { data: JSON.stringify({ version: 2, ...request, status: "ok", payload: 8 }) }));
     oldClose(new Event("close"));
     expect(transport.pendingCount()).toBe(1);
-    next.reply({ version: 1, ...request, status: "ok", payload: 9 });
+    next.reply({ version: 2, ...request, status: "ok", payload: 9 });
     expect(await pending).toEqual({ status: "applied", value: 9 });
     transport.stop();
   });
@@ -171,12 +171,12 @@ describe("socket operation transport", () => {
     transport.connect(() => socket.asWebSocket());
     const rejected = transport.request("read", {}, parseNumber);
     const first = sentRequest(socket, 0);
-    socket.reply({ version: 1, ...first, status: "error", error: { code: "denied", message: "No access" } });
+    socket.reply({ version: 2, ...first, status: "error", error: { code: "denied", message: "No access" } });
     expect(await rejected).toEqual({ status: "rejected", code: "denied", message: "No access" });
 
     const invalid = transport.request("read", {}, parseNumber);
     const second = sentRequest(socket, 1);
-    socket.reply({ version: 1, ...second, status: "error", error: { code: 7, message: "bad" } });
+    socket.reply({ version: 2, ...second, status: "error", error: { code: 7, message: "bad" } });
     expect(await invalid).toEqual({ status: "unknown", reason: "invalid-response" });
 
     const oversized = transport.request("read", {}, parseNumber);
@@ -186,14 +186,15 @@ describe("socket operation transport", () => {
   });
 
   test("invalid envelope fields never complete a request", async () => {
-    const invalidReplies: Array<(request: { generation: number; requestId: number }) => unknown> = [
+    const invalidReplies: Array<(request: { requestId: number }) => unknown> = [
       () => null,
       () => [],
-      () => ({ version: 1, requestId: 1, status: "ok", payload: 2 }),
-      (request) => ({ ...request, version: 2, status: "ok", payload: 2 }),
-      (request) => ({ ...request, version: 1, requestId: 0, status: "ok", payload: 2 }),
-      (request) => ({ ...request, version: 1, status: "other", payload: 2 }),
-      (request) => ({ ...request, version: 1, status: "error" }),
+      (request) => ({ ...request, version: 1, status: "ok", payload: 2 }),
+      (request) => ({ ...request, version: 2, generation: 1, status: "ok", payload: 2 }),
+      (request) => ({ ...request, version: 2, requestId: 0, status: "ok", payload: 2 }),
+      (request) => ({ ...request, version: 2, status: "other", payload: 2 }),
+      (request) => ({ ...request, version: 2, status: "error" }),
+      (request) => ({ ...request, version: 2, status: "ok", payload: 2, extra: true }),
     ];
     for (const makeReply of invalidReplies) {
       const transport = createSocketTransport();
@@ -235,8 +236,8 @@ describe("socket operation transport", () => {
     transport.stop();
     expect(await final).toEqual({ status: "unknown", reason: "stopped" });
     expect(replacement.listeners.size).toBe(0);
-    lateMessage(new MessageEvent("message", { data: JSON.stringify({ version: 1, ...sentRequest(replacement, 0), status: "ok", payload: 42 }) }));
-    replacement.reply({ version: 1, ...sentRequest(replacement, 0), status: "ok", payload: 43 });
+    lateMessage(new MessageEvent("message", { data: JSON.stringify({ version: 2, ...sentRequest(replacement, 0), status: "ok", payload: 42 }) }));
+    replacement.reply({ version: 2, ...sentRequest(replacement, 0), status: "ok", payload: 43 });
     expect(parseAfterStop).not.toHaveBeenCalled();
     expect(transport.pendingCount()).toBe(0);
     transport.stop();
