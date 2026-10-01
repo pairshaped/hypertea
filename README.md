@@ -67,8 +67,11 @@ exactly `version` (2), `kind` (`"event"`), `event` (a name like an operation
 name) and `payload`; it has no `requestId` or `status`. Register a handler after
 `connect` with `transport.on(event, parse, handler)`. It returns a function that
 removes the handler, or `undefined` when there is no active connection. The
-handler runs synchronously as each frame arrives, in arrival order with the
-other frames, and never counts as a reply. One handler per name; a second one
+handler runs synchronously as each frame arrives and never counts as a reply.
+A reply's promise resolves at its own arrival, so once microtasks drain a caller
+sees events and replies in the order the frames arrived. Frames that arrive in
+one task (rare for a socket) run their handlers first and the awaiting
+continuations after. One handler per name; a second one
 replaces the first. A frame for a name with no handler is ignored. A payload
 that fails its parser, a frame with an unknown `kind`, an extra or missing
 field, a bad event name, or a frame over `maxFrameBytes` closes the socket and

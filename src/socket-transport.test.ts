@@ -247,20 +247,31 @@ describe("socket operation transport", () => {
 describe("server-pushed events", () => {
   const event = (name: string, payload: unknown) => ({ version: 2, kind: "event", event: name, payload });
 
-  test("delivers events in arrival order between replies and never as replies", async () => {
+  test("observes events and replies in arrival order and never takes an event for a reply", async () => {
     const transport = createSocketTransport();
     const socket = new FakeSocket();
     transport.connect(() => socket.asWebSocket());
     const seen: Array<string> = [];
     transport.on("changed", parseNumber, (value) => { seen.push(`event ${String(value)}`); });
-    const read = transport.request("read", {}, parseNumber);
-    void read.then(() => { seen.push("reply"); });
-    const request = sentRequest(socket, 0);
+    const first = transport.request("read", {}, parseNumber);
+    void first.then(() => { seen.push("reply 1"); });
+    const second = transport.request("read", {}, parseNumber);
+    void second.then(() => { seen.push("reply 2"); });
+    const a = sentRequest(socket, 0);
+    const b = sentRequest(socket, 1);
+    // A microtask turn between frames stands in for separate network messages.
     socket.reply(event("changed", 1));
-    socket.reply({ version: 2, requestId: request.requestId, status: "ok", payload: 7 });
+    await Promise.resolve();
+    socket.reply({ version: 2, requestId: a.requestId, status: "ok", payload: 7 });
+    await Promise.resolve();
     socket.reply(event("changed", 2));
-    expect(await read).toEqual({ status: "applied", value: 7 });
-    expect(seen).toEqual(["event 1", "event 2", "reply"]);
+    await Promise.resolve();
+    socket.reply({ version: 2, requestId: b.requestId, status: "ok", payload: 8 });
+    await Promise.resolve();
+    socket.reply(event("changed", 3));
+    expect(seen).toEqual(["event 1", "reply 1", "event 2", "reply 2", "event 3"]);
+    expect(await first).toEqual({ status: "applied", value: 7 });
+    expect(await second).toEqual({ status: "applied", value: 8 });
     expect(transport.pendingCount()).toBe(0);
     transport.stop();
   });
