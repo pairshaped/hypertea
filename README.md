@@ -356,9 +356,3 @@ simulated async actions.
 - [0006: Browserless Program Testing](docs/adr/0006-browserless-program-testing.md)
 - [0007: Field Value Ownership After Mount](docs/adr/0007-field-value-ownership.md)
 - [0008: WebMCP Uses Program Messages and Completion Effects](docs/adr/0008-webmcp-program-integration.md)
-
-## Source ownership
-
-The private Sports monorepo is Hypertea's editable source of truth. Public
-copies are derived with filtered history and are not a second editable source.
-Changes come back through this package.
