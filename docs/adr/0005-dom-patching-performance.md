@@ -50,6 +50,17 @@ fixture hydrates absent slots around adjacent text, a memoized subtree and a key
 sibling, asserting zero removed elements and preserved focus. Existing keyed
 reorder tests continue to cover subsequent reconciliation.
 
+The Curling applications do not currently provide matching hydration markup:
+managed admin islands replace a server loading placeholder, and the public app
+renders a semantic server fallback rather than the client's styled view.
+Zero element replacement is therefore a contract for matching-markup fixtures,
+not a claim about these application mounts. Browser verification compares both
+removed and added element counts during the first patch on Tags and public
+`/landing` against the base runtime. Neither count may increase. The form-builder
+browser check separately proves that typing through a disappearing conditional
+alert retains the same focused input. This boundary requires no server rendering
+change.
+
 ## Performance Goal
 
 Hypertea does not need to beat Hyperapp. It should stay within the same practical class for small SSR islands:
