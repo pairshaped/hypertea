@@ -5,6 +5,7 @@ import {
   createWebMCP,
   defineWebMCPTool,
   exposeMessages,
+  observeWebMCPCalls,
   type WebMCPCompletion,
   type WebMCPInvocation,
   type WebMCPRegisteredTool,
@@ -107,6 +108,65 @@ function mountAsyncCounter(names: ReadonlyArray<string> = ["save"]) {
 }
 
 describe("WebMCP program integration", () => {
+  test("native and fallback admission refuses before dispatch or start, and cleanup restores calls", async () => {
+    const native = installBrowser();
+    const { mounted, saves } = mountAsyncCounter();
+    const start = vi.fn();
+    const refusal = { reason: "assistant-busy", explanation: "Unfinished turn", nextStep: "Wait" };
+    const stop = observeWebMCPCalls(document, { beforeDispatch: () => refusal, onStart: start });
+    stops.push(stop);
+    const agent = required(window.hyperteaAgent);
+    expect(await agent.executeTool("save", { amount: 4 })).toEqual(refusal);
+    expect(await required(native.get("save")).execute({ amount: 5 })).toEqual(refusal);
+    expect(saves).toEqual([]);
+    expect(start).not.toHaveBeenCalled();
+    await expect(agent.executeTool("save", {})).rejects.toThrow("finite amount");
+    stop();
+    stops.push(observeWebMCPCalls(document, { beforeDispatch: () => undefined }));
+    stops.push(observeWebMCPCalls(document, { onStart: start }));
+    const pending = required(native.get("save")).execute({ amount: 7 });
+    expect(start).toHaveBeenCalledWith(expect.objectContaining({ name: "save" }));
+    mounted.dispatch({ ...required(saves[0]), type: "saved", status: "applied" });
+    expect(await pending).toMatchObject({ count: 7 });
+  });
+
+  test("a start callback can cancel without dispatching, and observers belong only to their document", async () => {
+    const { saves } = mountAsyncCounter();
+    const signal = new AbortController();
+    const elsewhere = document.implementation.createHTMLDocument();
+    const foreign = vi.fn();
+    stops.push(observeWebMCPCalls(elsewhere, { beforeDispatch: () => "foreign", onStart: foreign }));
+    stops.push(observeWebMCPCalls(document, { onStart: () => { signal.abort(); } }));
+    await expect(required(window.hyperteaAgent).executeTool("save", { amount: 1 }, { signal: signal.signal })).rejects.toMatchObject({ outcome: "cancelled-before-dispatch" });
+    expect(saves).toEqual([]);
+    expect(foreign).not.toHaveBeenCalled();
+  });
+
+  test("independent bundle copies share publication and admission, and keep each other's registrations", async () => {
+    const first = mountAsyncCounter();
+    const agent = required(window.hyperteaAgent);
+    vi.resetModules();
+    const copy = await import("./webmcp.js");
+    const onStart = vi.fn();
+    const refusal = { reason: "busy" };
+    const stop = copy.observeWebMCPCalls(document, { beforeDispatch: () => refusal, onStart });
+    stops.push(stop);
+    expect(await agent.executeTool("save", { amount: 1 })).toEqual(refusal);
+    const bridge = copy.createWebMCP<{ type: "release"; invocation: WebMCPInvocation }>({ onRegistrationError: () => { throw Error("Registration failed"); } });
+    const tool = copy.defineWebMCPTool({ name: "release", description: "Release", inputSchema: {}, parseInput: () => undefined, toMessage: (_, invocation) => ({ type: "release" as const, invocation }) });
+    const subscription = bridge.subscription([tool]);
+    const unsubscribe = subscription.subscribe((msg) => { void bridge.complete({ type: "webmcp.complete", invocation: msg.invocation, result: "released" }); }, { settle: () => Promise.resolve() });
+    stops.push(unsubscribe);
+    expect(window.hyperteaAgent).toBe(agent);
+    expect(agent.getTools().map((t) => t.name)).toEqual(["save", "release"]);
+    stop();
+    expect(await agent.executeTool("release", {})).toBe("released");
+    unsubscribe();
+    expect(agent.getTools().map((t) => t.name)).toEqual(["save"]);
+    const pending = agent.executeTool("save", { amount: 3 });
+    first.mounted.dispatch({ ...required(first.saves[0]), type: "saved", status: "applied" });
+    expect(await pending).toMatchObject({ count: 3 });
+  });
   test("registering tools exposes a catalog and completes calls without native WebMCP", async () => {
     const { mounted, node, saves } = mountAsyncCounter();
     const agent = required(window.hyperteaAgent);

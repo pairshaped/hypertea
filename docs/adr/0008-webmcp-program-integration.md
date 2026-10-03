@@ -44,6 +44,13 @@ global and catalog. A registration failure removes only the failing bridge's
 tools. Native and JavaScript calls share validation, completion correlation,
 render settlement and cancellation semantics.
 
+Publication and call observers are stored on the owning document with stable
+versioned symbols. Independently bundled shell and feature programs share one
+catalog and keep independent registration ownership. Document-scoped observers
+can refuse a validated call synchronously before dispatch. Start notifications
+run only after admission and before dispatch, on both native and fallback paths.
+Human message dispatch does not pass through this adapter boundary.
+
 Ordinary program imports do not load the adapter. The browserless suite tests
 program behavior through the public interfaces. A separate, opt-in native smoke
 test verifies the browser's evolving WebMCP contract. This browser boundary

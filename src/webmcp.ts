@@ -76,7 +76,41 @@ type AgentPublication = {
   definitions: string;
 };
 
-const agentPublications = new WeakMap<Document, AgentPublication>();
+// Independently bundled programs still belong to the same document. Module-local
+// WeakMaps would give the shell and feature bundles competing publications.
+const publicationKey = Symbol.for("hypertea.webmcp.publication.v1");
+const observersKey = Symbol.for("hypertea.webmcp.observers.v1");
+
+export type WebMCPCallObserver = Readonly<{
+  beforeDispatch?: (tool: WebMCPToolMetadata) => WebMCPValue | undefined;
+  onStart?: (tool: WebMCPToolMetadata) => void;
+}>;
+type AgentDocument = Document & {
+  [publicationKey]?: AgentPublication;
+  [observersKey]?: Set<WebMCPCallObserver>;
+};
+
+/** Document-scoped admission and start notifications for native and fallback calls. */
+export function observeWebMCPCalls(page: Document, observer: WebMCPCallObserver): () => void {
+  const scope = page as AgentDocument;
+  const observers = scope[observersKey] ?? new Set<WebMCPCallObserver>();
+  scope[observersKey] = observers;
+  observers.add(observer);
+  return () => {
+    observers.delete(observer);
+    if (observers.size === 0 && scope[observersKey] === observers) Reflect.deleteProperty(scope, observersKey);
+  };
+}
+
+function admitToolCall(page: Document, tool: WebMCPToolMetadata): WebMCPValue | undefined {
+  const observers = [...((page as AgentDocument)[observersKey] ?? [])];
+  for (const observer of observers) {
+    const refusal = observer.beforeDispatch?.(tool);
+    if (refusal !== undefined) return refusal;
+  }
+  for (const observer of observers) observer.onStart?.(tool);
+  return undefined;
+}
 
 function refreshAgentCatalog(publication: AgentPublication): void {
   publication.definitions = `[${[...publication.entries.values()].map((entry) => entry.metadata).join(",")}]`;
@@ -86,7 +120,8 @@ function refreshAgentCatalog(publication: AgentPublication): void {
 function exposeAgentTools(page: Document, tools: ReadonlyArray<WebMCPRegisteredTool>): () => void {
   const host = page.defaultView ?? undefined;
   if (host === undefined) throw new Error("Agent exposure requires a browser window");
-  let publication = agentPublications.get(page);
+  const scope = page as AgentDocument;
+  let publication = scope[publicationKey];
   const names = new Set(publication?.entries.keys());
   // Validate and serialize before changing a shared publication. Failure in one
   // program must leave other programs' tools and catalog intact.
@@ -117,7 +152,7 @@ function exposeAgentTools(page: Document, tools: ReadonlyArray<WebMCPRegisteredT
     };
     host.hyperteaAgent = created.agent;
     page.head.append(catalog);
-    agentPublications.set(page, created);
+    scope[publicationKey] = created;
     publication = created;
   }
   for (const entry of entries) publication.entries.set(entry.tool.name, entry);
@@ -129,7 +164,7 @@ function exposeAgentTools(page: Document, tools: ReadonlyArray<WebMCPRegisteredT
     if (owned.entries.size !== 0) return;
     if (host.hyperteaAgent === owned.agent) delete host.hyperteaAgent;
     owned.catalog.remove();
-    agentPublications.delete(page);
+    Reflect.deleteProperty(scope, publicationKey);
   };
 }
 
@@ -251,9 +286,13 @@ export function createWebMCP<Msg extends ProgramMsg>(options: Readonly<{
               ...metadata,
               execute: async (input, execution) => {
                 const signal = execution?.signal;
-                if (!active || signal?.aborted === true) throw new WebMCPInvocationError("cancelled-before-dispatch");
+                const cancelled = () => !active || signal?.aborted === true;
+                if (cancelled()) throw new WebMCPInvocationError("cancelled-before-dispatch");
                 const invocation = `${key}:${String(++nextInvocation)}` as WebMCPInvocation;
                 const message = toMessage(input, invocation);
+                const refusal = admitToolCall(page, metadata);
+                if (refusal !== undefined) return refusal;
+                if (cancelled()) throw new WebMCPInvocationError("cancelled-before-dispatch");
                 return new Promise<WebMCPValue>((resolve, reject) => {
                   let finished = false;
                   let completing = false;

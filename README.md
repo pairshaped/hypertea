@@ -345,6 +345,16 @@ registered tools. It updates as programs add or remove tools, and disappears
 with the last tool set. Multiple programs share the catalog; names must be unique
 across the document.
 
+`observeWebMCPCalls(document, { beforeDispatch, onStart })` observes calls from
+both interfaces across independently bundled programs. After input validation,
+`beforeDispatch(tool)` runs synchronously. Return a JSON result to refuse the
+call without dispatching a message. Return `undefined` to admit it. All admission
+callbacks run before any `onStart(tool)` callback, which runs immediately before
+dispatch. Use this boundary for a page's assistant guard and agent-control mode;
+ordinary human messages do not trigger it. Call the returned cleanup function
+when the page controller stops. Observers and publication belong to the document,
+so separate tabs share neither. A callback that throws prevents dispatch.
+
 The fallback does not make an agent discover tools automatically. Give it the
 calling instructions or use a browser connector that knows this convention.
 Agents limited to screenshots or accessibility snapshots can still use the
