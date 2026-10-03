@@ -2,7 +2,7 @@ import { resolve } from "node:path";
 import ts from "typescript";
 import { expect, test } from "vitest";
 
-import { exposeMessages, type WebMCPInvocation } from "./webmcp.js";
+import { exposeMessages, type WebMCPInvocation } from "./webmcp.js"; // Y8 sports-q162: remove compatibility metadata
 import { generateWebMCPSchemas } from "./webmcp-generate.js";
 
 function fixture(source: string, overrides: ts.CompilerOptions = {}, moduleSource?: string) {
@@ -144,35 +144,36 @@ test("rejects open message records, including when the payload is otherwise vali
 });
 
 
+// Y8 sports-q162 converts this compatibility fixture; nested payload fields remain ordinary JSON.
 test("generated schemas validate JSON inputs and dispatch independent copies of the selected message", () => {
   const { program, path } = fixture(`
-    import { exposeMessages, type WebMCPInvocation } from "./webmcp.js";
+    import { exposeMessages, type WebMCPInvocation } from "./webmcp.js"; // Y8 sports-q162: remove compatibility metadata
     type Payload = Readonly<{ enabled: boolean; mode: "one" | "two"; values: readonly number[];
       range: { limit: number; label: string | null }; yes: true; no: false;
-      mapped: Record<"x" | "y", number>; nested: { type: string; invocation: string }
+      mapped: Record<"x" | "y", number>; nested: { type: string; invocation: string } // Y8 sports-q162
     }> & { marker: 1 };
-    type Msg = { type: "send"; payload: Payload; invocation: WebMCPInvocation };
+    type Msg = { type: "send"; payload: Payload; invocation: WebMCPInvocation }; // Y8 sports-q162
     exposeMessages<Msg>([{ message: "send", description: "Send" }], {});
   `);
   const schemas = generateWebMCPSchemas(program, path);
-  const [tool] = exposeMessages<{ type: "send"; payload: unknown; invocation: WebMCPInvocation }>([{ message: "send", description: "Send" }], schemas);
+  const [tool] = exposeMessages<{ type: "send"; payload: unknown; invocation: WebMCPInvocation }>([{ message: "send", description: "Send" }], schemas); // Y8 sports-q162
   if (tool === undefined) throw new Error("Expected generated tool");
-  const invocation = "test" as WebMCPInvocation;
-  const payload = { enabled: true, mode: "one", values: [1], range: { limit: 2, label: null }, yes: true, no: false, mapped: { x: 1, y: 2 }, nested: { type: "data", invocation: "data" }, marker: 1 };
-  const message = tool.toMessage({ payload }, invocation);
-  expect(message).toEqual({ type: "send", invocation, payload });
+  const invocation = "test" as WebMCPInvocation; // Y8 sports-q162
+  const payload = { enabled: true, mode: "one", values: [1], range: { limit: 2, label: null }, yes: true, no: false, mapped: { x: 1, y: 2 }, nested: { type: "data", invocation: "data" }, marker: 1 }; // Y8 sports-q162
+  const message = tool.toMessage({ payload }, invocation); // Y8 sports-q162
+  expect(message).toEqual({ type: "send", invocation, payload }); // Y8 sports-q162
   payload.values.push(3);
   expect(message.payload).toMatchObject({ values: [1] });
-  expect(tool.toMessage({ payload: { ...payload, mode: "two", enabled: false, range: { limit: 1, label: "text" } } }, invocation).type).toBe("send");
+  expect(tool.toMessage({ payload: { ...payload, mode: "two", enabled: false, range: { limit: 1, label: "text" } } }, invocation).type).toBe("send"); // Y8 sports-q162
   for (const input of [null, [], new Date(), Object.create({ payload }), { payload, extra: true }, { payload, [Symbol("extra")]: true },
     { payload: { ...payload, values: "bad" } }, { payload: { ...payload, values: [NaN] } }, { payload: { ...payload, values: Array(1) } },
     { payload: { ...payload, enabled: 1 } }, { payload: { ...payload, mode: "three" } }, { payload: { ...payload, range: { limit: 2 } } },
     { payload: { ...payload, range: { limit: 2, label: 3 } } }, { payload: { ...payload, mapped: { x: 1 } } },
-  ]) expect(() => tool.toMessage(input, invocation)).toThrow(/Invalid input/);
+  ]) expect(() => tool.toMessage(input, invocation)).toThrow(/Invalid input/); // Y8 sports-q162
   const record = Object.assign(Object.create(null) as Record<string, unknown>, { payload });
-  expect(tool.toMessage(record, invocation).type).toBe("send");
+  expect(tool.toMessage(record, invocation).type).toBe("send"); // Y8 sports-q162
   let reads = 0;
-  expect(() => tool.toMessage({ get payload() { return ++reads === 1 ? payload : "changed"; } }, invocation)).toThrow(/Invalid input/);
+  expect(() => tool.toMessage({ get payload() { return ++reads === 1 ? payload : "changed"; } }, invocation)).toThrow(/Invalid input/); // Y8 sports-q162
 });
 
 test("rejects stale or missing sidecars before registering any tools", () => {
