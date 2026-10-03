@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 
-import { clicked, defineProgram, h, mountProgram } from "./program.js";
+import { clicked, defineProgram, effectOrigin, h, mountProgram } from "./program.js";
 import {
   createWebMCP,
   defineWebMCPTool,
@@ -12,6 +12,44 @@ import {
 } from "./webmcp.js";
 
 const stops: Array<() => void> = [];
+
+test("tool origin follows asynchronous effects without marking intervening human actions", async () => {
+  const native = installBrowser();
+  type Msg = Readonly<{ type: "begin" | "continued"; invocation?: WebMCPInvocation }>;
+  type Effect = Msg | WebMCPCompletion;
+  const bridge = createWebMCP<Msg>({ onRegistrationError: () => ({ type: "begin" }) });
+  const tools = [defineWebMCPTool({ name: "origin", description: "Check origin", inputSchema: { type: "object" },
+    parseInput: () => undefined, toMessage: (_input, invocation): Msg => ({ type: "begin", invocation }) })];
+  const observed: Array<string | undefined> = [];
+  const resume: Array<() => void> = [];
+  const node = document.createElement("output");
+  document.body.append(node);
+  const program = defineProgram<undefined, number, Msg, Effect>({
+    init: () => [0, []], update: (model, message) => [model + 1, [message]],
+    view: model => h("output", {}, model), subscriptions: () => [bridge.subscription(tools)],
+  });
+  const mounted = mountProgram({ node, flags: undefined, program, runEffect: async (dispatch, effect) => {
+    observed.push(effectOrigin(dispatch));
+    if (effect.type === "begin") {
+      await new Promise<void>(resolve => { resume.push(resolve); });
+      dispatch({ type: "continued", ...(effect.invocation === undefined ? {} : { invocation: effect.invocation }) });
+    } else if (effect.type === "continued" && effect.invocation !== undefined) {
+      await bridge.complete({ type: "webmcp.complete", invocation: effect.invocation, result: "done" });
+    }
+  } });
+  stops.push(mounted.stop);
+  await mounted.settle();
+  for (const origin of ["native", "fallback"] as const) {
+    const pending = origin === "native" ? required(native.get("origin")).execute({})
+      : required(window.hyperteaAgent).executeTool("origin", {});
+    mounted.dispatch({ type: "begin" });
+    expect(observed.splice(0)).toEqual([origin, undefined]);
+    for (const finish of resume.splice(0)) finish();
+    await expect(pending).resolves.toBe("done");
+    await mounted.settle();
+    expect(observed.splice(0)).toEqual([origin, undefined]);
+  }
+});
 
 afterEach(() => {
   for (const stop of stops.splice(0)) stop();

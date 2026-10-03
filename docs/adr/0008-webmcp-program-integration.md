@@ -51,6 +51,14 @@ can refuse a validated call synchronously before dispatch. Start notifications
 run only after admission and before dispatch, on both native and fallback paths.
 Human message dispatch does not pass through this adapter boundary.
 
+The adapter supplies native or fallback origin with its subscription dispatch.
+The runtime keeps it on each effect's dispatch function and carries it into
+messages that function sends. `effectOrigin(dispatch)` exposes this attribution
+to effect runners without adding it to domain messages or models. Human and
+initial effects have no agent origin. Origin never grants authority. Stable
+symbols let independently bundled adapters and effect runners share the value;
+no document-wide active-call flag controls attribution.
+
 Ordinary program imports do not load the adapter. The browserless suite tests
 program behavior through the public interfaces. A separate, opt-in native smoke
 test verifies the browser's evolving WebMCP contract. This browser boundary

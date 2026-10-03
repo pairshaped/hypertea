@@ -24,6 +24,13 @@ type PropsRecord = Readonly<Record<string, unknown>>;
 type MountedVNode<State> = VNode<State> & { node: Node };
 export type ProgramMsg = Readonly<{ type: string }>;
 export type ProgramEffect = Readonly<{ type: string }>;
+export type EffectOrigin = "native" | "fallback";
+const effectOriginKey = Symbol.for("hypertea.effect.origin.v1");
+
+/** Origin belongs to an effect's dispatch, including its asynchronous continuations. */
+export function effectOrigin(dispatch: object): EffectOrigin | undefined {
+  return (dispatch as { readonly [effectOriginKey]?: EffectOrigin })[effectOriginKey];
+}
 
 type ProgramEffecter<Model, Effect extends ProgramEffect> = (
   dispatch: Dispatch<Model>,
@@ -202,7 +209,7 @@ export type Transition<Model, Effect extends ProgramEffect> = readonly [
 ];
 
 export type ProgramSubscriber<Msg extends ProgramMsg> = (
-  dispatch: (message: Msg) => void,
+  dispatch: (message: Msg, origin?: EffectOrigin) => void,
   context: SubscriptionContext,
 ) => Unsubscribe;
 
@@ -596,40 +603,30 @@ export function start<Model, Msg extends ProgramMsg, Effect extends ProgramEffec
 ): ProgramHandle<Model, Msg> {
   const [state, effects] = runtime.init();
 
-  const dispatchMessage: Action<Model, Msg> = (model, message) => {
+  const messageAction = (origin?: EffectOrigin): Action<Model, Msg> => (model, message) => {
     const [next, nextEffects] = runtime.update(model, message);
-    return [next, ...nextEffects.map(toEffectTuple)];
+    return [next, ...nextEffects.map(effect => toEffectTuple(effect, origin))];
   };
+  const dispatchMessage = messageAction();
 
-  const runEffecter: ProgramEffecter<Model, Effect> = (
-    dispatch,
+  const toEffectTuple = (effect: Effect, origin?: EffectOrigin): ProgramEffectTuple<Model, Effect> => [
+    (dispatch, payload) => {
+      const runEffect = runtime.runEffect;
+      if (runEffect === undefined) throw new Error("Effectless programs cannot produce effects");
+      const send = Object.assign((message: Msg) => { dispatch(messageAction(origin), message); },
+        { [effectOriginKey]: origin });
+      return runEffect(send, payload);
+    },
     effect,
-  ) => {
-    const runEffect = runtime.runEffect;
-    if (runEffect === undefined) {
-      throw new Error("Effectless programs cannot produce effects");
-    }
-    return runEffect(
-      (message) => {
-        dispatch(dispatchMessage, message);
-      },
-      effect,
-    );
-  };
-
-  const toEffectTuple = (
-    effect: Effect,
-  ): ProgramEffectTuple<Model, Effect> => {
-    return [runEffecter, effect];
-  };
+  ];
 
   const runSubscriber: Subscriber<Model, ProgramSubscription<Msg>> = (
     dispatch,
     subscription,
   ) => {
     return subscription.subscribe(
-      (message) => {
-        dispatch(dispatchMessage, message);
+      (message, origin) => {
+        dispatch(messageAction(origin), message);
       },
       {
         settle: async () => {
@@ -648,7 +645,7 @@ export function start<Model, Msg extends ProgramMsg, Effect extends ProgramEffec
     return [runSubscriber, subscription];
   };
 
-  const init: Dispatchable<Model> = [state, ...effects.map(toEffectTuple)];
+  const init: Dispatchable<Model> = [state, ...effects.map(effect => toEffectTuple(effect))];
   const props: App<Model> = {
     init,
     view: (model: Model) =>

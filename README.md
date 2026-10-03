@@ -355,6 +355,12 @@ ordinary human messages do not trigger it. Call the returned cleanup function
 when the page controller stops. Observers and publication belong to the document,
 so separate tabs share neither. A callback that throws prevents dispatch.
 
+`effectOrigin(dispatch)` from `@pairshaped/hypertea/program` returns `"native"`
+or `"fallback"` for an effect caused by a tool call, and `undefined` for a human
+or initial effect. Use the dispatch passed to that effect runner. Messages sent
+through it keep their origin across asynchronous continuation; a human message
+on the same mount has its own origin. Use this for telemetry, never permission.
+
 The fallback does not make an agent discover tools automatically. Give it the
 calling instructions or use a browser connector that knows this convention.
 Agents limited to screenshots or accessibility snapshots can still use the

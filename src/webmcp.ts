@@ -1,4 +1,4 @@
-import type { ProgramMsg, ProgramSubscription } from "./program.js";
+import type { EffectOrigin, ProgramMsg, ProgramSubscription } from "./program.js";
 
 export type WebMCPValue =
   | string
@@ -69,8 +69,12 @@ declare global {
   }
 }
 
+type AgentTool = Omit<WebMCPRegisteredTool, "execute"> & Readonly<{
+  execute: (input: unknown, options?: Readonly<{ signal: AbortSignal }>, origin?: EffectOrigin) => Promise<WebMCPValue>;
+}>;
+
 type AgentPublication = {
-  readonly entries: Map<string, Readonly<{ tool: WebMCPRegisteredTool; metadata: string; }>>;
+  readonly entries: Map<string, Readonly<{ tool: AgentTool; metadata: string; }>>;
   readonly catalog: HTMLScriptElement;
   readonly agent: WebMCPAgent;
   definitions: string;
@@ -117,7 +121,7 @@ function refreshAgentCatalog(publication: AgentPublication): void {
   publication.catalog.textContent = `{"version":1,"global":"hyperteaAgent","tools":${publication.definitions}}`;
 }
 
-function exposeAgentTools(page: Document, tools: ReadonlyArray<WebMCPRegisteredTool>): () => void {
+function exposeAgentTools(page: Document, tools: ReadonlyArray<AgentTool>): () => void {
   const host = page.defaultView ?? undefined;
   if (host === undefined) throw new Error("Agent exposure requires a browser window");
   const scope = page as AgentDocument;
@@ -146,7 +150,7 @@ function exposeAgentTools(page: Document, tools: ReadonlyArray<WebMCPRegisteredT
         executeTool: async (name, input, options) => {
           const entry = created.entries.get(name);
           if (entry === undefined) throw new Error(`Unknown Hypertea tool: ${name}`);
-          return entry.tool.execute(input, options);
+          return entry.tool.execute(input, options, "fallback");
         },
       },
     };
@@ -280,11 +284,11 @@ export function createWebMCP<Msg extends ProgramMsg>(options: Readonly<{
             removeAgent?.();
             for (const invocation of pending.values()) invocation.cancel();
           };
-          const registered = tools.map((tool): WebMCPRegisteredTool => {
+          const registered = tools.map((tool): AgentTool => {
             const { toMessage, ...metadata } = tool;
             return {
               ...metadata,
-              execute: async (input, execution) => {
+              execute: async (input, execution, origin = "native") => {
                 const signal = execution?.signal;
                 const cancelled = () => !active || signal?.aborted === true;
                 if (cancelled()) throw new WebMCPInvocationError("cancelled-before-dispatch");
@@ -318,7 +322,7 @@ export function createWebMCP<Msg extends ProgramMsg>(options: Readonly<{
                   });
                   signal?.addEventListener("abort", cancel, { once: true });
                   try {
-                    dispatch(message);
+                    dispatch(message, origin);
                   } catch (error) {
                     cleanup();
                     reject(error instanceof Error ? error : new Error("WebMCP dispatch failed", { cause: error }));
