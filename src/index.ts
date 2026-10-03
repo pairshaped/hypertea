@@ -1523,20 +1523,34 @@ function hydrateChildren<State>(
   listener: EventListener,
   isSvg: boolean,
 ): void {
+  let oldTail = oldChildren.length - 1;
+  let newTail = newChildren.length - 1;
+  while (oldTail >= 0 && newTail >= 0) {
+    const oldChild = oldChildren[oldTail] as VNode<State>;
+    const newChild = maybeVNode(newChildren[newTail], oldChild);
+    newChildren[newTail] = newChild;
+    if (oldChild.type !== elementNodeType || newChild.type !== elementNodeType || oldChild.tag !== newChild.tag) {
+      break;
+    }
+    patch(parent, mountedVNode(oldChild).node, oldChild, newChild, listener, isSvg);
+    oldTail -= 1;
+    newTail -= 1;
+  }
+  const anchor = getNode(newChildren[newTail + 1]);
   let oldIndex = 0;
-  for (let index = 0; index < newChildren.length; index += 1) {
-    const oldChild = oldChildren[oldIndex] as VNode<State> | undefined;
+  for (let index = 0; index <= newTail; index += 1) {
+    const oldChild = oldIndex <= oldTail ? oldChildren[oldIndex] as VNode<State> : undefined;
     const newChild = maybeVNode(newChildren[index], oldChild);
     newChildren[index] = newChild;
     if (
       newChild.type === textNodeType && newChild.tag === "" &&
       !(oldChild?.type === textNodeType && oldChild.tag === "")
     ) {
-      parent.insertBefore(createNode(newChild, listener, isSvg), oldChild?.node ?? null);
+      parent.insertBefore(createNode(newChild, listener, isSvg), oldChild?.node ?? anchor);
       continue;
     }
     if (oldChild === undefined) {
-      parent.appendChild(createNode(newChild, listener, isSvg));
+      parent.insertBefore(createNode(newChild, listener, isSvg), anchor);
       continue;
     }
     if (
@@ -1545,11 +1559,12 @@ function hydrateChildren<State>(
     ) {
       const remainder = (mountedVNode(oldChild).node as Text).splitText(newChild.tag.length);
       oldChildren.splice(oldIndex + 1, 0, text(remainder.data, remainder));
+      oldTail += 1;
     }
     patch(parent, mountedVNode(oldChild).node, oldChild, newChild, listener, isSvg);
     oldIndex += 1;
   }
-  removeOldChildren(parent, oldChildren, oldIndex, oldChildren.length - 1);
+  removeOldChildren(parent, oldChildren, oldIndex, oldTail);
 }
 
 function patchChildren<State>(

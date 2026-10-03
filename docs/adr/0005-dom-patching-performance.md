@@ -30,9 +30,10 @@ shifting a later input into a different position. Nested fragments preserve
 these slots too. Empty text contributes no text content or layout box.
 
 HTML parsing drops empty text and merges adjacent text. Recycled element VNodes
-therefore use a first-patch hydration pass. It restores missing empty slots and
-splits matching text runs while walking the server nodes in order. Elements are
-patched in place. Once hydrated, the element uses ordinary keyed or unkeyed
+therefore use a first-patch hydration pass. It preserves a matching suffix of element tags, then restores missing empty
+slots and splits matching text runs while walking the remaining server nodes
+in order. The suffix anchors insertion when fallback markup has fewer children
+than the client view. Matching elements are patched in place. Once hydrated, the element uses ordinary keyed or unkeyed
 reconciliation. A private weak set marks recycled VNodes, with no public VNode,
 child type or `h` signature change. Server and client must still agree on the
 visible element structure; this does not infer missing server elements or repair

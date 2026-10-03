@@ -936,6 +936,24 @@ describe("app", () => {
     expect([input.selectionStart, input.selectionEnd]).toEqual([2, 5]);
   });
 
+  test("hydrates a matching trailing element after mismatched fallback children", async () => {
+    const mount = appendMount("<div><main>Fallback</main><footer><input></footer></div>");
+    const footer = requireElement("footer");
+    const input = requireElement("input") as HTMLInputElement;
+    input.value = "retained";
+    app<boolean>({
+      init: false,
+      node: mount,
+      view: () => h("div", {}, h("main", { key: "page" }, "Client"),
+        h("div", {}, "Extra client section"), false, h("footer", {}, h("input", {}))),
+    });
+    await flushRender();
+    expect(requireElement("footer")).toBe(footer);
+    expect(requireElement("input")).toBe(input);
+    expect(input.value).toBe("retained");
+    expect(Array.from(mount.children, node => node.tagName)).toEqual(["MAIN", "DIV", "FOOTER"]);
+  });
+
   test.each([undefined, null, false, true])("keeps the focused input after a toggled %s child", async (absent) => {
     const mount = appendMount("<div></div>");
     const dispatch = app<boolean>({
