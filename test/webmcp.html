@@ -20,7 +20,7 @@
     <main id="app"></main>
     <p><button id="stop">Stop program</button></p>
     <script type="module">
-      import { clicked, defineProgram, h, mountProgram } from "../dist/program.js";
+      import { clicked, defineProgram, h, mountProgram, reply } from "../dist/program.js";
       import { createWebMCP } from "../dist/webmcp.js";
 
       import { mcpTools } from "./webmcp-tools.js";
@@ -37,16 +37,10 @@
             case "add": {
               const valid = message.amount >= 1 && message.amount <= 10;
               const count = valid ? model.count + message.amount : model.count;
-              return [{ ...model, count }, message.invocation === undefined ? [] : [{
-                type: "webmcp.complete", invocation: message.invocation,
-                result: { status: valid ? "applied" : "rejected", count },
-              }]];
+              return [{ ...model, count }, [reply({ status: valid ? "applied" : "rejected", count })]];
             }
-            case "save": return [model, [{ type: "save", count: model.count, invocation: message.invocation }]];
-            case "saved": return [{ ...model, saved: `Saved ${message.count}` }, message.invocation === undefined ? [] : [{
-              type: "webmcp.complete", invocation: message.invocation,
-              result: { status: "applied", saved: message.count },
-            }]];
+            case "save": return [model, [{ type: "save", count: model.count }]];
+            case "saved": return [{ ...model, saved: `Saved ${message.count}` }, [reply({ status: "applied", saved: message.count })]];
             case "toggleTools": return [{ ...model, enabled: !model.enabled }, []];
             case "registrationFailed": return [{ ...model, error: message.error }, []];
           }
@@ -71,12 +65,11 @@
         node: document.getElementById("app"), flags: document.modelContext !== undefined, program,
         runEffect: async (dispatch, effect) => {
           switch (effect.type) {
-            case "webmcp.complete": await bridge.complete(effect); break;
             case "save":
               // A real interpreter calls the existing application service here
-              // and carries this invocation through its success/failure message.
+              // and dispatches its result through this continuation.
               await Promise.resolve();
-              dispatch({ type: "saved", count: effect.count, invocation: effect.invocation });
+              dispatch({ type: "saved", count: effect.count });
               break;
           }
         },

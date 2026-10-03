@@ -1,13 +1,11 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 
-import { clicked, defineProgram, effectOrigin, h, mountProgram } from "./program.js";
+import { clicked, defineProgram, effectOrigin, h, mountProgram, reply } from "./program.js";
 import {
   createWebMCP,
   defineWebMCPTool,
   exposeMessages,
   observeWebMCPCalls,
-  type WebMCPCompletion,
-  type WebMCPInvocation,
   type WebMCPRegisteredTool,
 } from "./webmcp.js";
 
@@ -15,26 +13,24 @@ const stops: Array<() => void> = [];
 
 test("tool origin follows asynchronous effects without marking intervening human actions", async () => {
   const native = installBrowser();
-  type Msg = Readonly<{ type: "begin" | "continued"; invocation?: WebMCPInvocation }>;
-  type Effect = Msg | WebMCPCompletion;
+  type Msg = Readonly<{ type: "begin" | "continued" }>;
   const bridge = createWebMCP<Msg>({ onRegistrationError: () => ({ type: "begin" }) });
   const tools = [defineWebMCPTool({ name: "origin", description: "Check origin", inputSchema: { type: "object" },
-    parseInput: () => undefined, toMessage: (_input, invocation): Msg => ({ type: "begin", invocation }) })];
+    parseInput: () => undefined, toMessage: (): Msg => ({ type: "begin" }) })];
   const observed: Array<string | undefined> = [];
   const resume: Array<() => void> = [];
   const node = document.createElement("output");
   document.body.append(node);
-  const program = defineProgram<undefined, number, Msg, Effect>({
-    init: () => [0, []], update: (model, message) => [model + 1, [message]],
+  const program = defineProgram<undefined, number, Msg, Msg>({
+    init: () => [0, []], update: (model, message) => [model + 1,
+      message.type === "continued" ? [reply("done"), message] : [message]],
     view: model => h("output", {}, model), subscriptions: () => [bridge.subscription(tools)],
   });
   const mounted = mountProgram({ node, flags: undefined, program, runEffect: async (dispatch, effect) => {
     observed.push(effectOrigin(dispatch));
     if (effect.type === "begin") {
       await new Promise<void>(resolve => { resume.push(resolve); });
-      dispatch({ type: "continued", ...(effect.invocation === undefined ? {} : { invocation: effect.invocation }) });
-    } else if (effect.type === "continued" && effect.invocation !== undefined) {
-      await bridge.complete({ type: "webmcp.complete", invocation: effect.invocation, result: "done" });
+      dispatch({ type: "continued" });
     }
   } });
   stops.push(mounted.stop);
@@ -91,24 +87,24 @@ function parseAmount(input: unknown): number {
 
 function mountAsyncCounter(names: ReadonlyArray<string> = ["save"]) {
   type Msg =
-    | Readonly<{ type: "save"; amount: number; invocation: WebMCPInvocation; }>
-    | Readonly<{ type: "saved"; amount: number; invocation: WebMCPInvocation; status: string; }>
+    | Readonly<{ type: "save"; amount: number; }>
+    | Readonly<{ type: "saved"; amount: number; status: string; }>
     | Readonly<{ type: "registrationFailed"; error: unknown; }>
     | Readonly<{ type: "replaceTools"; }>
     | Readonly<{ type: "enable"; enabled: boolean; }>;
-  type Save = Readonly<{ type: "save"; amount: number; invocation: WebMCPInvocation; }>;
+  type Save = Readonly<{ type: "save"; amount: number; }>;
   type Model = Readonly<{ count: number; enabled: boolean; alternate: boolean; error: string; }>;
-  const saves: Array<Save> = [];
+  const saves: Array<{ effect: Save; dispatch: (message: Msg) => void }> = [];
   const bridge = createWebMCP<Msg>({ onRegistrationError: (error) => ({ type: "registrationFailed", error }) });
   const declarations = names.map((name) => defineWebMCPTool({
     name,
     description: "Save a counter value",
     inputSchema: { type: "object", properties: { amount: { type: "number" } }, required: ["amount"] },
     parseInput: parseAmount,
-    toMessage: (amount, invocation): Msg => ({ type: "save", amount, invocation }),
+    toMessage: (amount): Msg => ({ type: "save", amount }),
   }));
   const alternate = declarations.map((tool) => ({ ...tool, name: `${tool.name}_alternate` }));
-  const program = defineProgram<undefined, Model, Msg, Save | WebMCPCompletion>({
+  const program = defineProgram<undefined, Model, Msg, Save>({
     init: () => [{ count: 0, enabled: true, alternate: false, error: "" }, []],
     update: (model, message) => {
       switch (message.type) {
@@ -118,10 +114,7 @@ function mountAsyncCounter(names: ReadonlyArray<string> = ["save"]) {
           if (message.amount === 13) throw "Application failure";
           return [model, [message]];
         }
-        case "saved": return [{ ...model, count: message.amount }, [{
-          type: "webmcp.complete", invocation: message.invocation,
-          result: { status: message.status, count: message.amount },
-        }]];
+        case "saved": return [{ ...model, count: message.amount }, [reply({ status: message.status, count: message.amount })]];
         case "enable": return [{ ...model, enabled: message.enabled }, []];
         case "replaceTools": return [{ ...model, alternate: true }, []];
         case "registrationFailed": return [{ ...model, error: String(message.error) }, []];
@@ -133,13 +126,9 @@ function mountAsyncCounter(names: ReadonlyArray<string> = ["save"]) {
   const node = document.createElement("output");
   document.body.append(node);
   const mounted = mountProgram({
-    node, flags: undefined, program, runEffect: (_dispatch, effect) => {
-      if (effect.type === "save") {
-        saves.push(effect);
-        return;
-      }
-      return bridge.complete(effect);
-    }
+    node, flags: undefined, program, runEffect: (dispatch, effect) => new Promise<void>(resolve => {
+      saves.push({ effect, dispatch: message => { dispatch(message); resolve(); } });
+    }),
   });
   stops.push(mounted.stop);
   return { mounted, node, saves, bridge };
@@ -148,7 +137,7 @@ function mountAsyncCounter(names: ReadonlyArray<string> = ["save"]) {
 describe("WebMCP program integration", () => {
   test("native and fallback admission refuses before dispatch or start, and cleanup restores calls", async () => {
     const native = installBrowser();
-    const { mounted, saves } = mountAsyncCounter();
+    const { saves } = mountAsyncCounter();
     const start = vi.fn();
     const refusal = { reason: "assistant-busy", explanation: "Unfinished turn", nextStep: "Wait" };
     const stop = observeWebMCPCalls(document, { beforeDispatch: () => refusal, onStart: start });
@@ -164,7 +153,7 @@ describe("WebMCP program integration", () => {
     stops.push(observeWebMCPCalls(document, { onStart: start }));
     const pending = required(native.get("save")).execute({ amount: 7 });
     expect(start).toHaveBeenCalledWith(expect.objectContaining({ name: "save" }));
-    mounted.dispatch({ ...required(saves[0]), type: "saved", status: "applied" });
+    required(saves[0]).dispatch({ ...required(saves[0]).effect, type: "saved", status: "applied" });
     expect(await pending).toMatchObject({ count: 7 });
   });
 
@@ -190,10 +179,14 @@ describe("WebMCP program integration", () => {
     const stop = copy.observeWebMCPCalls(document, { beforeDispatch: () => refusal, onStart });
     stops.push(stop);
     expect(await agent.executeTool("save", { amount: 1 })).toEqual(refusal);
-    const bridge = copy.createWebMCP<{ type: "release"; invocation: WebMCPInvocation }>({ onRegistrationError: () => { throw Error("Registration failed"); } });
-    const tool = copy.defineWebMCPTool({ name: "release", description: "Release", inputSchema: {}, parseInput: () => undefined, toMessage: (_, invocation) => ({ type: "release" as const, invocation }) });
-    const subscription = bridge.subscription([tool]);
-    const unsubscribe = subscription.subscribe((msg) => { void bridge.complete({ type: "webmcp.complete", invocation: msg.invocation, result: "released" }); }, { call: () => Promise.reject(new Error("Unexpected program call")), settle: () => Promise.resolve() });
+    const bridge = copy.createWebMCP<{ type: "release" }>({ onRegistrationError: () => { throw Error("Registration failed"); } });
+    const tool = copy.defineWebMCPTool({ name: "release", description: "Release", inputSchema: {}, parseInput: () => undefined, toMessage: () => ({ type: "release" as const }) });
+    const node = document.createElement("output"); document.body.append(node);
+    const second = mountProgram({ node, flags: undefined, program: defineProgram<undefined, number, { type: "release" }, never>({
+      init: () => [0, []], update: model => [model, [reply("released")]], view: model => h("output", {}, model),
+      subscriptions: () => [bridge.subscription([tool])],
+    }) });
+    const unsubscribe = second.stop;
     stops.push(unsubscribe);
     expect(window.hyperteaAgent).toBe(agent);
     expect(agent.getTools().map((t) => t.name)).toEqual(["save", "release"]);
@@ -202,7 +195,7 @@ describe("WebMCP program integration", () => {
     unsubscribe();
     expect(agent.getTools().map((t) => t.name)).toEqual(["save"]);
     const pending = agent.executeTool("save", { amount: 3 });
-    first.mounted.dispatch({ ...required(first.saves[0]), type: "saved", status: "applied" });
+    required(first.saves[0]).dispatch({ ...required(first.saves[0]).effect, type: "saved", status: "applied" });
     expect(await pending).toMatchObject({ count: 3 });
   });
   test("registering tools exposes a catalog and completes calls without native WebMCP", async () => {
@@ -214,7 +207,7 @@ describe("WebMCP program integration", () => {
     });
     expect(agent.getTools().map((tool) => tool.name)).toEqual(["save"]);
     const pending = agent.executeTool("save", { amount: 4 });
-    mounted.dispatch({ ...required(saves[0]), type: "saved", status: "applied" });
+    required(saves[0]).dispatch({ ...required(saves[0]).effect, type: "saved", status: "applied" });
     expect(await pending).toEqual({ status: "applied", count: 4 });
     expect(node.textContent).toBe("4");
     mounted.stop();
@@ -231,7 +224,7 @@ describe("WebMCP program integration", () => {
     expect(window.hyperteaAgent).toBe(agent);
     second.mounted.stop();
     const pending = agent.executeTool("save", { amount: 5 });
-    first.mounted.dispatch({ ...required(first.saves[0]), type: "saved", status: "applied" });
+    required(first.saves[0]).dispatch({ ...required(first.saves[0]).effect, type: "saved", status: "applied" });
     expect(await pending).toEqual({ status: "applied", count: 5 });
   });
 
@@ -254,7 +247,7 @@ describe("WebMCP program integration", () => {
     expect(agent.getTools().map((tool) => tool.name)).toEqual(["other_save"]);
     expect([...native.keys()]).toEqual(["other_save"]);
     const result = agent.executeTool("other_save", { amount: 6 });
-    second.mounted.dispatch({ ...required(second.saves[0]), type: "saved", status: "applied" });
+    required(second.saves[0]).dispatch({ ...required(second.saves[0]).effect, type: "saved", status: "applied" });
     expect(await result).toEqual({ status: "applied", count: 6 });
     second.mounted.stop();
     expect(window.hyperteaAgent).toBeUndefined();
@@ -334,7 +327,7 @@ describe("WebMCP program integration", () => {
       case "stop": mounted.stop(); break;
     }
     await rejected;
-    mounted.dispatch({ ...required(saves[0]), type: "saved", status: "applied" });
+    required(saves[0]).dispatch({ ...required(saves[0]).effect, type: "saved", status: "applied" });
     expect(mounted.model().count).toBe(action === "stop" ? 0 : 4);
     if (action !== "abort") expect(window.hyperteaAgent).toBeUndefined();
   });
@@ -342,7 +335,7 @@ describe("WebMCP program integration", () => {
   test("human and tool actions share an update and tools reply after rendering", async () => {
     const tools = installBrowser();
     type Msg =
-      | Readonly<{ type: "add"; amount: number; invocation?: WebMCPInvocation; }>
+      | Readonly<{ type: "add"; amount: number; }>
       | Readonly<{ type: "registrationFailed"; error: unknown; }>;
     const bridge = createWebMCP<Msg>({
       onRegistrationError: (error) => ({ type: "registrationFailed", error }),
@@ -354,25 +347,21 @@ describe("WebMCP program integration", () => {
       annotations: { consequentialHint: false },
       inputSchema: { type: "object", properties: { amount: { type: "number" } }, required: ["amount"] },
       parseInput: parseAmount,
-      toMessage: (amount, invocation): Msg => ({ type: "add", amount, invocation }),
+      toMessage: (amount): Msg => ({ type: "add", amount }),
     })];
-    const program = defineProgram<undefined, number, Msg, WebMCPCompletion>({
+    const program = defineProgram<undefined, number, Msg, never>({
       init: () => [0, []],
       update: (count, message) => {
         if (message.type === "registrationFailed") throw message.error;
         const next = count + message.amount;
-        return [next, message.invocation === undefined ? [] : [{
-          type: "webmcp.complete",
-          invocation: message.invocation,
-          result: { status: "applied", count: next },
-        }]];
+        return [next, [reply({ status: "applied", count: next })]];
       },
       view: (count) => h("button", { onClick: clicked<Msg>({ type: "add", amount: 1 }) }, String(count)),
       subscriptions: () => [bridge.subscription(declarations)],
     });
     const node = document.createElement("button");
     document.body.append(node);
-    const mounted = mountProgram({ node, flags: undefined, program, runEffect: (_dispatch, effect) => bridge.complete(effect) });
+    const mounted = mountProgram({ node, flags: undefined, program });
     stops.push(mounted.stop);
     await mounted.settle();
 
@@ -399,11 +388,11 @@ describe("WebMCP program integration", () => {
     await mounted.settle();
     expect(firstResolved).toBe(false);
     const secondSave = required(saves[1]);
-    mounted.dispatch({ ...secondSave, type: "saved", status: "applied-with-refresh-failure" });
+    secondSave.dispatch({ ...secondSave.effect, type: "saved", status: "applied-with-refresh-failure" });
     expect(await second).toEqual({ status: "applied-with-refresh-failure", count: 8 });
     expect(node.textContent).toBe("8");
     expect(firstResolved).toBe(false);
-    mounted.dispatch({ ...required(saves[0]), type: "saved", status: "rejected" });
+    required(saves[0]).dispatch({ ...required(saves[0]).effect, type: "saved", status: "rejected" });
     expect(await first).toEqual({ status: "rejected", count: 4 });
   });
 
@@ -419,7 +408,7 @@ describe("WebMCP program integration", () => {
 
   test.each(["abort", "disable", "stop"] as const)("%s reports unknown after dispatch and ignores late completion", async (action) => {
     const tools = installBrowser();
-    const { mounted, saves, bridge } = mountAsyncCounter();
+    const { mounted, saves } = mountAsyncCounter();
     const abort = new AbortController();
     const tool = required(tools.get("save"));
     const pending = tool.execute({ amount: 4 }, { signal: abort.signal });
@@ -431,8 +420,8 @@ describe("WebMCP program integration", () => {
     }
     await rejected;
     const save = required(saves[0]);
-    mounted.dispatch({ ...save, type: "saved", status: "applied" });
-    await bridge.complete({ type: "webmcp.complete", invocation: save.invocation, result: { status: "late" } });
+    save.dispatch({ ...save.effect, type: "saved", status: "applied" });
+    save.dispatch({ ...save.effect, type: "saved", status: "late" });
     // Cancellation only stops the caller waiting. Application work can still apply.
     expect(mounted.model().count).toBe(action === "stop" ? 0 : 4);
     if (action !== "abort") {
@@ -443,14 +432,13 @@ describe("WebMCP program integration", () => {
     }
   });
 
-  test("stopping while a completion waits for rendering rejects the caller", async () => {
+  test("stopping after a reply cannot replace it with unknown", async () => {
     const tools = installBrowser();
     const { mounted, saves } = mountAsyncCounter();
     const pending = required(tools.get("save")).execute({ amount: 4 }, { signal: new AbortController().signal });
-    const rejected = expect(pending).rejects.toMatchObject({ outcome: "unknown" });
-    mounted.dispatch({ ...required(saves[0]), type: "saved", status: "applied" });
+    required(saves[0]).dispatch({ ...required(saves[0]).effect, type: "saved", status: "applied" });
     mounted.stop();
-    await rejected;
+    await expect(pending).resolves.toEqual({ status: "applied", count: 4 });
   });
 
   test.each(["throw", "reject"] as const)("registration %s removes the tool and reports a typed application message", async (failure) => {
@@ -494,8 +482,8 @@ describe("WebMCP program integration", () => {
     const execute = tools === undefined ? required(window.hyperteaAgent).executeTool.bind(undefined, "save") : required(tools.get("save")).execute;
     const signal = new AbortController().signal;
     await expect(execute({ amount: "bad" }, { signal })).rejects.toThrow("Expected a finite amount");
-    await expect(execute({ amount: -1 }, { signal })).rejects.toThrow("Application failure");
-    await expect(execute({ amount: 13 }, { signal })).rejects.toThrow("WebMCP dispatch failed");
+    await expect(execute({ amount: -1 }, { signal })).rejects.toMatchObject({ outcome: "unknown" });
+    await expect(execute({ amount: 13 }, { signal })).rejects.toMatchObject({ outcome: "unknown" });
     expect(saves).toEqual([]);
     expect(mounted.model().count).toBe(0);
   });
@@ -513,8 +501,8 @@ describe("WebMCP program integration", () => {
     expect(current.getTools().map((tool) => tool.name)).toEqual(["save_alternate"]);
     expect(document.getElementById("hypertea-agent-tools")?.textContent).toContain('"name":"save_alternate"');
     const result = current.executeTool("save_alternate", { amount: 7 });
-    mounted.dispatch({ ...required(saves[0]), type: "saved", status: "applied" });
-    mounted.dispatch({ ...required(saves[1]), type: "saved", status: "applied" });
+    required(saves[0]).dispatch({ ...required(saves[0]).effect, type: "saved", status: "applied" });
+    required(saves[1]).dispatch({ ...required(saves[1]).effect, type: "saved", status: "applied" });
     expect(await result).toEqual({ status: "applied", count: 7 });
     mounted.stop();
     expect(current.getTools()).toEqual([]);
@@ -532,41 +520,41 @@ describe("WebMCP program integration", () => {
     expect([...tools.keys()]).toEqual(["save_alternate"]);
     await expect(old.execute({ amount: 1 }, { signal })).rejects.toMatchObject({ outcome: "cancelled-before-dispatch" });
     const current = required(tools.get("save_alternate")).execute({ amount: 7 }, { signal });
-    mounted.dispatch({ ...required(saves[0]), type: "saved", status: "applied" });
-    mounted.dispatch({ ...required(saves[1]), type: "saved", status: "applied" });
+    required(saves[0]).dispatch({ ...required(saves[0]).effect, type: "saved", status: "applied" });
+    required(saves[1]).dispatch({ ...required(saves[1]).effect, type: "saved", status: "applied" });
     expect(await current).toEqual({ status: "applied", count: 7 });
   });
 
   test("the first completion wins while rendering is pending", async () => {
     const tools = installBrowser();
-    const { mounted, saves, bridge } = mountAsyncCounter();
+    const { saves } = mountAsyncCounter();
     const pending = required(tools.get("save")).execute({ amount: 2 }, { signal: new AbortController().signal });
     const save = required(saves[0]);
-    mounted.dispatch({ ...save, type: "saved", status: "applied" });
-    await bridge.complete({ type: "webmcp.complete", invocation: save.invocation, result: { status: "duplicate" } });
+    save.dispatch({ ...save.effect, type: "saved", status: "applied" });
+    save.dispatch({ ...save.effect, type: "saved", status: "duplicate" });
     expect(await pending).toEqual({ status: "applied", count: 2 });
   });
 
   test("a bridge cannot be shared by simultaneous program subscriptions", () => {
     installBrowser();
     const { bridge } = mountAsyncCounter();
-    expect(() => bridge.subscription([]).subscribe(() => undefined, { call: () => Promise.reject(new Error("Unexpected program call")), settle: () => Promise.resolve() }))
+    expect(() => bridge.subscription([]).subscribe(() => undefined, { call: () => Promise.reject(new Error("Unexpected program call")) }))
       .toThrow("Create one WebMCP bridge per mounted program");
   });
 
   test("subscriptions are safe when there is no document", () => {
     vi.stubGlobal("document", undefined);
     const bridge = createWebMCP({ onRegistrationError: () => ({ type: "error" }) });
-    const stop = bridge.subscription([]).subscribe(() => undefined, { call: () => Promise.reject(new Error("Unexpected program call")), settle: () => Promise.resolve() });
+    const stop = bridge.subscription([]).subscribe(() => undefined, { call: () => Promise.reject(new Error("Unexpected program call")) });
     stop();
   });
 
   test("Chrome 152 tool callbacks can omit execution options", async () => {
     const tools = installBrowser();
-    const { mounted, saves } = mountAsyncCounter();
+    const { saves } = mountAsyncCounter();
     // The native browser does not supply the draft's second callback argument.
     const pending = required(tools.get("save")).execute({ amount: 3 });
-    mounted.dispatch({ ...required(saves[0]), type: "saved", status: "applied" });
+    required(saves[0]).dispatch({ ...required(saves[0]).effect, type: "saved", status: "applied" });
     expect(await pending).toEqual({ status: "applied", count: 3 });
   });
 
@@ -607,7 +595,7 @@ describe("WebMCP program integration", () => {
 
 
 test("allowlisted messages validate before dispatch and complete through the mounted program", async () => {
-  type Msg = { type: "add"; amount: number; invocation?: WebMCPInvocation } | { type: "failed" };
+  type Msg = { type: "add"; amount: number } | { type: "failed" };
   const mcpTools = exposeMessages<Msg>([{ message: "add", description: "Add a number" }], {
     add: { type: "object", properties: { amount: { type: "number" } }, required: ["amount"], additionalProperties: false },
   });
@@ -616,14 +604,13 @@ test("allowlisted messages validate before dispatch and complete through the mou
   document.body.append(node);
   const mounted = mountProgram({
     node, flags: undefined,
-    program: defineProgram<undefined, number, Msg, WebMCPCompletion>({
+    program: defineProgram<undefined, number, Msg, never>({
       init: () => [0, []],
       update: (count, msg) => msg.type === "failed" ? [count, []] : [count + msg.amount,
-      msg.invocation === undefined ? [] : [{ type: "webmcp.complete", invocation: msg.invocation, result: count + msg.amount }]],
+      [reply(count + msg.amount)]],
       view: (count) => h("output", {}, String(count)),
       subscriptions: () => [bridge.subscription(mcpTools)],
     }),
-    runEffect: (_dispatch, effect) => bridge.complete(effect),
   });
   stops.push(mounted.stop);
   mounted.dispatch({ type: "add", amount: 2 });
@@ -634,4 +621,53 @@ test("allowlisted messages validate before dispatch and complete through the mou
     await expect(agent.executeTool("add", input)).rejects.toThrow(/Invalid input/);
   }
   expect(mounted.model()).toBe(5);
+});
+
+
+// Branch-only compatibility proof. Y8 sports-q162 removes this test with the old path.
+test.each(["legacy", "reply", "render-failure"] as const)("temporary completion and reply share one caller: %s", async mode => {
+  type LegacyMsg = { type: "legacy"; invocation: import("./webmcp.js").WebMCPInvocation };
+  type LegacyEffect = import("./webmcp.js").WebMCPCompletion;
+  const bridge = createWebMCP<LegacyMsg>({ onRegistrationError: () => { throw new Error("Unexpected registration error"); } });
+  const tools = [defineWebMCPTool({ name: "legacy", description: "Migration proof", inputSchema: {}, parseInput: () => undefined,
+    toMessage: (_, invocation): LegacyMsg => ({ type: "legacy", invocation }) })];
+  const node = document.createElement("output"); document.body.append(node);
+  const mounted = mountProgram({ node, flags: undefined,
+    program: defineProgram<undefined, number, LegacyMsg, LegacyEffect>({
+      init: () => [0, []],
+      update: (_model, msg) => [1, [
+        { type: "webmcp.complete", invocation: msg.invocation, result: "old" },
+        ...(mode === "reply" ? [reply("new")] : []),
+      ]],
+      view: model => { if (model === 1 && mode === "render-failure") throw new Error("Cannot render"); return h("output", {}, model); },
+      subscriptions: () => [bridge.subscription(tools)],
+    }),
+    runEffect: async (_send, effect) => { await bridge.complete(effect); await bridge.complete(effect); },
+  });
+  stops.push(mounted.stop);
+  const pending = required(window.hyperteaAgent).executeTool("legacy", {});
+  if (mode === "render-failure") await expect(pending).rejects.toMatchObject({ outcome: "unknown" });
+  else await expect(pending).resolves.toBe(mode === "reply" ? "new" : "old");
+});
+
+test("registration failure rejects an already dispatched call", async () => {
+  const registration = Promise.withResolvers<undefined>();
+  installBrowser(() => registration.promise);
+  const { saves, mounted } = mountAsyncCounter();
+  const pending = required(window.hyperteaAgent).executeTool("save", { amount: 5 });
+  const rejected = expect(pending).rejects.toMatchObject({ outcome: "unknown" });
+  registration.reject(new Error("Registration failed"));
+  await rejected;
+  required(saves[0]).dispatch({ ...required(saves[0]).effect, type: "saved", status: "applied" });
+  expect(mounted.model().count).toBe(5);
+});
+
+test("adapter preserves a pre-dispatch rejection from its subscription call boundary", async () => {
+  const bridge = createWebMCP<{ type: "read" }>({ onRegistrationError: () => { throw new Error("Unexpected registration failure"); } });
+  const tools = [defineWebMCPTool({ name: "read", description: "Read", inputSchema: {}, parseInput: () => undefined, toMessage: () => ({ type: "read" as const }) })];
+  const stop = bridge.subscription(tools).subscribe(() => undefined, {
+    call: () => Promise.reject(Object.assign(new Error("cancelled"), { outcome: "cancelled-before-dispatch" })),
+  });
+  stops.push(stop);
+  await expect(required(window.hyperteaAgent).executeTool("read", {})).rejects.toMatchObject({ outcome: "cancelled-before-dispatch" });
 });

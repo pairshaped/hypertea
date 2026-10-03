@@ -13,22 +13,20 @@ a query parameter. An agent uses whichever interface it supports.
 
 Create one bridge per mounted program in an approved effect or entry module.
 The factory below makes that ownership explicit. The button and tool both
-dispatch `add`; only the tool supplies an invocation ID.
+send `add`; the tool waits for a reply on its own chain.
 
 ```ts
-import { clicked, defineProgram, h, mountProgram } from "@pairshaped/hypertea/program";
+import { clicked, defineProgram, h, mountProgram, reply } from "@pairshaped/hypertea/program";
 import {
   createWebMCP,
   exposeMessages,
-  type WebMCPCompletion,
-  type WebMCPInvocation,
 } from "@pairshaped/hypertea/webmcp";
 
 import schemas from "./webmcp.generated.js";
 
 type Model = Readonly<{ count: number; error: string }>;
 type Msg =
-  | Readonly<{ type: "add"; amount: number; invocation?: WebMCPInvocation }>
+  | Readonly<{ type: "add"; amount: number }>
   | Readonly<{ type: "toolRegistrationFailed"; error: string }>;
 
 function createCounter() {
@@ -40,17 +38,13 @@ function createCounter() {
   const mcpTools = exposeMessages<Msg>([
     { message: "add", description: "Add a finite number to the visible counter" },
   ], schemas);
-  const program = defineProgram<undefined, Model, Msg, WebMCPCompletion>({
+  const program = defineProgram<undefined, Model, Msg, never>({
     init: () => [{ count: 0, error: "" }, []],
     update: (model, message) => {
       switch (message.type) {
         case "add": {
           const next = { ...model, count: model.count + message.amount };
-          return [next, message.invocation === undefined ? [] : [{
-            type: "webmcp.complete",
-            invocation: message.invocation,
-            result: { status: "applied", count: next.count },
-          }]];
+          return [next, [reply({ status: "applied", count: next.count })]];
         }
         case "toolRegistrationFailed":
           return [{ ...model, error: message.error }, []];
@@ -62,15 +56,14 @@ function createCounter() {
     ),
     subscriptions: () => [bridge.subscription(mcpTools)],
   });
-  return { program, bridge };
+  return { program };
 }
 
-const { program, bridge } = createCounter();
+const { program } = createCounter();
 const node = document.createElement("div");
 document.body.append(node);
 const mounted = mountProgram({
   node, flags: undefined, program,
-  runEffect: (_dispatch, effect) => bridge.complete(effect),
 });
 // The host calls mounted.stop() when it removes this program.
 ```
@@ -110,11 +103,10 @@ generation: `any`, `unknown`, functions, classes, tuples, recursive shapes, open
 index signatures, branded payload scalars, and non-JSON values. A required
 `undefined` input fails generation too; JSON cannot represent it.
 
-Every selected message must declare `invocation: WebMCPInvocation` or
-`invocation?: WebMCPInvocation`. Hypertea supplies it. Neither `type` nor
-`invocation` appears in the root input schema, and callers cannot provide them.
-Nested properties with those names remain ordinary data. Input is copied before
-dispatch so a fallback caller cannot mutate a queued message afterward.
+Selected messages need no caller metadata. The root `type` discriminator is
+supplied by Hypertea and excluded from the input schema. Nested properties with
+that name remain ordinary data. Input is copied before dispatch so a fallback
+caller cannot mutate a queued message afterward.
 
 The schema describes the actual message shape. A union of `{ path: string }`
 and `{ choices: readonly string[] }` exposes both forms. An optional `open`
@@ -135,35 +127,34 @@ and `debugging`. They describe behavior; they do not grant authorization.
 
 ## Server-backed actions
 
-Add `WebMCPCompletion` to your existing effect union and route just that case
-to `bridge.complete(effect)`. Keep existing network cases in the same
-interpreter. For a cart addition, the flow is:
+Return `reply(result)` in the transition that handles the outcome. Keep network
+work in the existing effect interpreter. For a cart addition:
 
-1. A button dispatches `addProduct` without an invocation ID. A tool dispatches
-   `addProduct` with one.
-2. Update performs the same checks and emits the same add-product effect.
-3. The interpreter carries the optional invocation ID alongside its request
-   and returns it with the exact success or failure message. It need not be
-   sent to the server if the existing transport already correlates responses.
-4. Update applies the outcome to the model and emits `webmcp.complete` for that
-   invocation. Project only the result the tool should expose.
+1. A button dispatches `addProduct`. A tool calls the program with `addProduct`.
+2. Update validates it and returns the add-product effect.
+3. The runner awaits the request and dispatches its result through the exact
+   dispatch it received. The runtime retains the caller and origin there.
+4. Update applies the result and returns `reply` with a limited JSON projection.
 
-An invocation ID identifies one waiting caller. It is not a server idempotency
-key, cart revision or authorization token. A human action's result must never
-complete an unrelated tool call. Do not infer success from the next loaded
-message, a global loading flag, or `settle()`.
+Every terminal path needs a reply, including refusals, transport failures, context
+changes and stale responses. A superseded operation answers `superseded` from its
+own stale response. A human action must never answer a stored tool operation.
+Application request IDs still decide whether a response may update current state.
 
-The result is a JSON value. The application can return outcomes such as
-`{ status: "rejected", reason: "unavailable" }`, `{ status: "applied" }`, or
-`{ status: "applied-with-refresh-failure" }`. Hypertea does not interpret these
-domain outcomes. Complete every terminal path, including validation rejections,
-transport failures and superseded operations. There is no automatic retry or
-timeout. If an application never emits completion and its caller never cancels,
-that call remains pending until the subscription stops.
+`update(model, message, origin)` receives `native` or `fallback` on a tool chain
+and `undefined` otherwise. Use it for tool-specific draft protection and telemetry,
+never authorization. Pass the stamped dispatch through runners unchanged and
+return a promise that settles after the last dispatch. Use `context.settle()` for
+DOM coordination; it flushes rendering without waiting for an animation frame.
 
-For a read tool, dispatch a declared read intent and return a limited projection
-through the same completion effect. Do not export arbitrary dispatch, internal
-result messages, or whole application models as tools.
+Results are JSON values such as `{ status: "rejected", reason: "unavailable" }`,
+`{ status: "applied" }` or `{ status: "applied-with-refresh-failure" }`. Hypertea
+does not interpret those outcomes. It rejects an unanswered completed chain with
+`unknown` and never retries automatically. A pending effect can keep a call open
+until it settles or the caller cancels.
+
+Read tools return limited projections through `reply` too. Do not expose arbitrary
+dispatch, internal result messages or entire models as tools.
 
 ## Lifecycle and cancellation
 
@@ -184,11 +175,11 @@ Without a browser document, the subscription is inert.
 
 - `cancelled-before-dispatch`: a supplied signal was already aborted, or the
   caller invoked a callback whose registration had been removed.
-- `unknown`: the caller cancelled or the subscription stopped after dispatch.
+- `unknown`: the caller cancelled, the subscription stopped, or the chain ended without a reply after dispatch.
   Application work may still finish. This is not rollback or permission to
   retry a mutation blindly.
 
-The first completion wins. Late or duplicate completions are ignored, including
+The first reply wins. Late or duplicate replies are ignored, including
 responses from a removed registration. Promises and callbacks stay outside the
 model. Bridge instances cannot be shared by simultaneous mounted programs.
 
@@ -197,10 +188,10 @@ Each owns only its tools. Duplicate names or a conflicting existing
 `window.hyperteaAgent` / `#hypertea-agent-tools` fail registration without
 overwriting another integration. Empty tool sets publish nothing.
 
-Subscription callbacks now receive `(dispatch, context)`. `context.settle()`
-waits for the render scheduled by the current dispatch, including during
-initial subscription setup. Existing callbacks that take only `dispatch` still
-work. Direct callers of `.subscribe()` must supply the context argument.
+Subscription callbacks receive `(dispatch, context)`. Use `context.call()` when
+the subscription needs an answer; plain `dispatch()` starts an independent chain.
+Callbacks that take only `dispatch` still work. Tests should mount the production
+program and return results through captured effect dispatches.
 
 ## Agents without native WebMCP
 

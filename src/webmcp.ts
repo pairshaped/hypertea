@@ -1,3 +1,4 @@
+import { legacyCallReply } from "./program.js"; // Y8 sports-q162
 import type { EffectOrigin, ProgramMsg, ProgramSubscription } from "./program.js";
 
 export type WebMCPValue =
@@ -9,14 +10,14 @@ export type WebMCPValue =
   | ReadonlyArray<WebMCPValue>
   | Readonly<{ [key: string]: WebMCPValue; }>;
 
-declare const invocationBrand: unique symbol;
-export type WebMCPInvocation = string & { readonly [invocationBrand]: true; };
+declare const invocationBrand: unique symbol; // Y8 sports-q162
+export type WebMCPInvocation = string & { readonly [invocationBrand]: true; }; // Y8 sports-q162
 
-export type WebMCPCompletion = Readonly<{
-  type: "webmcp.complete";
-  invocation: WebMCPInvocation;
-  result: WebMCPValue;
-}>;
+export type WebMCPCompletion = Readonly<{ // Y8 sports-q162
+  type: "webmcp.complete"; // Y8 sports-q162
+  invocation: WebMCPInvocation; // Y8 sports-q162
+  result: WebMCPValue; // Y8 sports-q162
+}>; // Y8 sports-q162
 
 export class WebMCPInvocationError extends Error {
   constructor(readonly outcome: "cancelled-before-dispatch" | "unknown") {
@@ -49,7 +50,7 @@ export type WebMCPInputSchema =
   | Readonly<{ type: "object"; properties: Readonly<Record<string, WebMCPInputSchema>>; required: ReadonlyArray<string>; additionalProperties: false }>;
 
 export type WebMCPTool<Msg extends ProgramMsg> = WebMCPToolMetadata & Readonly<{
-  toMessage: (input: unknown, invocation: WebMCPInvocation) => Msg;
+  toMessage: (input: unknown, invocation: WebMCPInvocation) => Msg; // Y8 sports-q162
 }>;
 
 export type WebMCPRegisteredTool = WebMCPToolMetadata & Readonly<{
@@ -179,13 +180,13 @@ type ModelContext = Readonly<{
 export function defineWebMCPTool<Input, Msg extends ProgramMsg>(
   declaration: WebMCPToolMetadata & Readonly<{
     parseInput: (input: unknown) => Input;
-    toMessage: (input: Input, invocation: WebMCPInvocation) => Msg;
+    toMessage: (input: Input, invocation: WebMCPInvocation) => Msg; // Y8 sports-q162
   }>,
 ): WebMCPTool<Msg> {
   const { parseInput, toMessage, ...metadata } = declaration;
   return {
     ...metadata,
-    toMessage: (input, invocation) => toMessage(parseInput(input), invocation),
+    toMessage: (input, invocation) => toMessage(parseInput(input), invocation), // Y8 sports-q162
   };
 }
 
@@ -213,7 +214,7 @@ export function exposeMessages<Msg extends ProgramMsg>(
       },
       // The generator proves the schema against Msg. These reserved fields are
       // never input properties, and are written last even for an invalid sidecar.
-      toMessage: (input, invocation) => ({ ...input, type: name, invocation }) as unknown as Msg,
+      toMessage: (input, invocation) => ({ ...input, type: name, invocation }) as unknown as Msg, // Y8 sports-q162
     });
   });
 }
@@ -242,7 +243,7 @@ function matchesInput(schema: WebMCPInputSchema, input: unknown): boolean {
 
 export type WebMCPBridge<Msg extends ProgramMsg> = Readonly<{
   subscription: (tools: ReadonlyArray<WebMCPTool<Msg>>) => ProgramSubscription<Msg>;
-  complete: (effect: WebMCPCompletion) => Promise<void>;
+  complete: (effect: WebMCPCompletion) => Promise<void>; // Y8 sports-q162
 }>;
 
 let nextBridge = 0;
@@ -251,12 +252,9 @@ export function createWebMCP<Msg extends ProgramMsg>(options: Readonly<{
   onRegistrationError: (error: unknown) => Msg;
 }>): WebMCPBridge<Msg> {
   const key = `webmcp:${String(++nextBridge)}`;
-  let nextInvocation = 0;
+  let nextInvocation = 0; // Y8 sports-q162
   let subscribed = false;
-  const pending = new Map<WebMCPInvocation, Readonly<{
-    complete: (result: WebMCPValue) => Promise<void>;
-    cancel: () => void;
-  }>>();
+  const pending = new Map<WebMCPInvocation, (result: WebMCPValue) => Promise<void>>(); // Y8 sports-q162
 
   return {
     subscription: (tools) => {
@@ -282,7 +280,6 @@ export function createWebMCP<Msg extends ProgramMsg>(options: Readonly<{
             subscribed = false;
             registration.abort();
             removeAgent?.();
-            for (const invocation of pending.values()) invocation.cancel();
           };
           const registered = tools.map((tool): AgentTool => {
             const { toMessage, ...metadata } = tool;
@@ -292,42 +289,23 @@ export function createWebMCP<Msg extends ProgramMsg>(options: Readonly<{
                 const signal = execution?.signal;
                 const cancelled = () => !active || signal?.aborted === true;
                 if (cancelled()) throw new WebMCPInvocationError("cancelled-before-dispatch");
-                const invocation = `${key}:${String(++nextInvocation)}` as WebMCPInvocation;
-                const message = toMessage(input, invocation);
+                const invocation = `${key}:${String(++nextInvocation)}` as WebMCPInvocation; // Y8 sports-q162
+                const message = toMessage(input, invocation); // Y8 sports-q162
                 const refusal = admitToolCall(page, metadata);
                 if (refusal !== undefined) return refusal;
                 if (cancelled()) throw new WebMCPInvocationError("cancelled-before-dispatch");
-                return new Promise<WebMCPValue>((resolve, reject) => {
-                  let finished = false;
-                  let completing = false;
-                  const cleanup = () => {
-                    finished = true;
-                    pending.delete(invocation);
-                    signal?.removeEventListener("abort", cancel);
-                  };
-                  const cancel = () => {
-                    cleanup();
-                    reject(new WebMCPInvocationError("unknown"));
-                  };
-                  pending.set(invocation, {
-                    cancel,
-                    complete: async (result) => {
-                      if (completing) return;
-                      completing = true;
-                      await context.settle();
-                      if (finished) return;
-                      cleanup();
-                      resolve(result);
-                    },
+                try {
+                  return await context.call(message, {
+                    origin,
+                    signal: AbortSignal.any(signal === undefined ? [registration.signal] : [registration.signal, signal]),
+                    [legacyCallReply]: complete => { pending.set(invocation, complete); }, // Y8 sports-q162
                   });
-                  signal?.addEventListener("abort", cancel, { once: true });
-                  try {
-                    dispatch(message, origin);
-                  } catch (error) {
-                    cleanup();
-                    reject(error instanceof Error ? error : new Error("WebMCP dispatch failed", { cause: error }));
-                  }
-                });
+                } catch (error) {
+                  throw new WebMCPInvocationError(error instanceof Error && "outcome" in error && error.outcome === "cancelled-before-dispatch"
+                    ? "cancelled-before-dispatch" : "unknown");
+                } finally {
+                  pending.delete(invocation); // Y8 sports-q162
+                }
               },
             };
           });
@@ -346,8 +324,8 @@ export function createWebMCP<Msg extends ProgramMsg>(options: Readonly<{
       } satisfies ProgramSubscription<Msg> & { tools: ReadonlyArray<WebMCPTool<Msg>>; };
       return subscription;
     },
-    complete: async (effect) => {
-      await pending.get(effect.invocation)?.complete(effect.result);
+    complete: async (effect) => { // Y8 sports-q162
+      await pending.get(effect.invocation)?.(effect.result); // Y8 sports-q162
     },
   };
 }

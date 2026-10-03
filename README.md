@@ -309,10 +309,10 @@ The lower-level `app()` API remains available from the package root for runtime 
 ## WebMCP
 
 WebMCP tools are an optional input to the same running program. A tool validates
-input, dispatches an ordinary application message with an invocation ID, and
-waits for a `webmcp.complete` effect carrying that ID. Human actions can use the
-same message without an invocation ID. The bridge does not run a separate
-request path or infer success from rendering or a loading flag.
+input and calls the program with an ordinary application message. Its update
+returns `reply(result)` on the request's own effect chain. Human actions use the
+same messages; replies on their chains are dropped. The runtime never infers an
+outcome from rendering or a loading flag.
 
 Declare which existing messages agents can send:
 
@@ -339,8 +339,8 @@ TypeScript 6, `strictNullChecks`, and `exactOptionalPropertyTypes`. It does not 
 application code or include the compiler in the browser bundle.
 
 Registration is a managed subscription. Removing it cancels pending callers and
-unregisters the tools. Completion is a managed effect that waits for rendering
-before replying.
+unregisters the tools. The runtime flushes queued rendering before delivering a
+reply, even in a hidden tab. Effect runners never interpret replies.
 
 Register once with `bridge.subscription(mcpTools)`. Hypertea publishes both:
 
@@ -408,4 +408,4 @@ simulated async actions.
 - [0005: DOM Patching Performance](docs/adr/0005-dom-patching-performance.md)
 - [0006: Browserless Program Testing](docs/adr/0006-browserless-program-testing.md)
 - [0007: Field Value Ownership After Mount](docs/adr/0007-field-value-ownership.md)
-- [0008: WebMCP Uses Program Messages and Completion Effects](docs/adr/0008-webmcp-program-integration.md)
+- [0008: WebMCP uses program calls and replies](docs/adr/0008-webmcp-program-integration.md)

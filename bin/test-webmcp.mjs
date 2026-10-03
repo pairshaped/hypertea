@@ -15,6 +15,7 @@ const packageRoot = resolve(import.meta.dirname, "..");
 const repositoryRoot = resolve(packageRoot, "../..");
 const fallback = process.argv.includes("--fallback");
 const session = fallback ? "hypertea-agent" : "hypertea-webmcp";
+const executablePath = process.env.HYPERTEA_WEBMCP_BROWSER_EXECUTABLE;
 
 async function cli(...args) {
   const { stdout } = await exec("playwright-cli", ["--json", ...args], {
@@ -49,7 +50,7 @@ const config = join(output, "browser.json");
 await writeFile(config, JSON.stringify({
   browser: {
     browserName: "chromium",
-    launchOptions: { channel: "chrome", headless: true, args: [fallback ? "--disable-blink-features=WebMCP" : "--enable-experimental-web-platform-features"] },
+    launchOptions: { ...(executablePath === undefined ? { channel: "chrome" } : { executablePath }), headless: true, args: [fallback ? "--disable-blink-features=WebMCP" : "--enable-experimental-web-platform-features"] },
     contextOptions: { viewport: { width: 1440, height: 1000 } },
   },
 }));

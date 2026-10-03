@@ -56,6 +56,6 @@ production `Program` in Node or JSDOM.
 Every complex island exports its canonical program. A separate test-only program definition is not allowed because it can drift from production behavior.
 
 The optional native WebMCP smoke test is the exception recorded in
-[0008: WebMCP Uses Program Messages and Completion Effects](0008-webmcp-program-integration.md).
+[0008: WebMCP uses program calls and replies](0008-webmcp-program-integration.md).
 It proves browser registration, invocation and cleanup that JSDOM cannot
 implement. Application behavior remains in the default browserless suite.

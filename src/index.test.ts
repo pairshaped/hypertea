@@ -765,7 +765,7 @@ describe("TEA island runtime", () => {
 
   test("provides generic browser subscriptions", async () => {
     const messages: Array<unknown> = [];
-    const context = { call: () => Promise.reject(new Error("Unexpected program call")), settle: () => Promise.resolve() };
+    const context = { call: () => Promise.reject(new Error("Unexpected program call")) };
 
     const stopEvery = every(10, () => ({ type: "tick" })).subscribe((message) => {
       messages.push(message);
@@ -846,27 +846,6 @@ describe("TEA island runtime", () => {
     expect(requireElement("span").textContent).toBe("1");
   });
 
-  test("subscriptions can await the first render during initialization", async () => {
-    const node = appendMount("<span></span>");
-    let settled: Promise<void> | undefined;
-    const handle = start<number, { type: "unused"; }, never>({
-      node,
-      init: () => [7, []],
-      update: (model) => [model, []],
-      view: (model) => h("span", {}, String(model)),
-      subscriptions: () => [{
-        key: "initial-render",
-        subscribe: (_dispatch, context) => {
-          settled = context.settle();
-          return () => undefined;
-        },
-      }],
-    });
-    await flushRender();
-    await settled;
-    expect(node.textContent).toBe("7");
-    handle.stop();
-  });
 
   test("exposes model, dispatch, settlement, and idempotent cleanup", async () => {
     const mount = appendMount("<span></span>");

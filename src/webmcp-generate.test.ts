@@ -5,22 +5,24 @@ import { expect, test } from "vitest";
 import { exposeMessages, type WebMCPInvocation } from "./webmcp.js";
 import { generateWebMCPSchemas } from "./webmcp-generate.js";
 
-function fixture(source: string, overrides: ts.CompilerOptions = {}) {
+function fixture(source: string, overrides: ts.CompilerOptions = {}, moduleSource?: string) {
   const path = resolve("src/message-fixture.ts");
   const options: ts.CompilerOptions = { strict: true, target: ts.ScriptTarget.ESNext, module: ts.ModuleKind.NodeNext, exactOptionalPropertyTypes: true, ...overrides };
   const host = ts.createCompilerHost(options);
   const read = host.getSourceFile.bind(host);
   host.getSourceFile = (file, languageVersion, onError, shouldCreateNewSourceFile) => file === path
     ? ts.createSourceFile(file, source, languageVersion, true)
-    : read(file, languageVersion, onError, shouldCreateNewSourceFile);
+    : moduleSource !== undefined && file === resolve("src/webmcp.ts")
+      ? ts.createSourceFile(file, moduleSource, languageVersion, true)
+      : read(file, languageVersion, onError, shouldCreateNewSourceFile);
   return { path, program: ts.createProgram([path], options, host) };
 }
 
 test("derives tool names and object inputs only for allowlisted messages", () => {
   const { program, path } = fixture(`
-    import { exposeMessages, type WebMCPInvocation } from "./webmcp.js";
+    import { exposeMessages } from "./webmcp.js";
     type Msg =
-      | { type: "add"; amount: number; invocation?: WebMCPInvocation }
+      | { type: "add"; amount: number }
       | { type: "loaded"; internal: AbortController };
     exposeMessages<Msg>([{ "message": "add", description: "Add to the counter" }], {});
   `);
@@ -31,8 +33,8 @@ test("derives tool names and object inputs only for allowlisted messages", () =>
 
 test("preserves nested payloads, optional fields, readonly arrays and alternative message inputs", () => {
   const { program, path } = fixture(`
-    import { exposeMessages, type WebMCPInvocation } from "./webmcp.js";
-    type Msg = Readonly<{ type: "filter"; invocation?: WebMCPInvocation; enabled?: boolean } & (
+    import { exposeMessages } from "./webmcp.js";
+    type Msg = Readonly<{ type: "filter"; enabled?: boolean } & (
       { choices: readonly ("league" | "event")[]; range: { limit: number; label: string | null } }
       | { path: string; version: 1 }
     )>;
@@ -56,9 +58,9 @@ test.each([
   ["{ next: Payload }", /Recursive/],
 ])("rejects unsupported payload %s instead of publishing a weaker schema", (payload, error) => {
   const { program, path } = fixture(`
-    import { exposeMessages, type WebMCPInvocation } from "./webmcp.js";
+    import { exposeMessages } from "./webmcp.js";
     type Payload = ${payload};
-    type Msg = { type: "send"; payload: Payload; invocation: WebMCPInvocation };
+    type Msg = { type: "send"; payload: Payload };
     exposeMessages<Msg>([{ message: "send", description: "Send" }], {});
   `);
   expect(() => generateWebMCPSchemas(program, path)).toThrow(error);
@@ -92,8 +94,8 @@ test.each([
   ["function exposeMessages() {}; exposeMessages();", /exactly one/],
 ])("rejects declarations it cannot statically prove: %s", (declaration, error) => {
   const { program, path } = fixture(`
-    import { exposeMessages, type WebMCPInvocation } from "./webmcp.js";
-    type Msg = { type: "send"; invocation: WebMCPInvocation } | { other: number } | { type: number };
+    import { exposeMessages } from "./webmcp.js";
+    type Msg = { type: "send" } | { other: number } | { type: number };
     const selection = { send: {} };
     ${declaration};
   `);
@@ -107,7 +109,7 @@ test("reports missing source and missing completion fields", () => {
     exposeMessages<Msg>([{ message: "send", description: "Send" }], {});
   `);
   expect(() => generateWebMCPSchemas(program, "absent.ts")).toThrow(/Source is not/);
-  expect(() => generateWebMCPSchemas(program, path)).toThrow(/WebMCPInvocation/);
+  expect(generateWebMCPSchemas(program, path)).toEqual({ send: { type: "object", properties: {}, required: [], additionalProperties: false } });
 });
 
 test.each([
@@ -116,9 +118,9 @@ test.each([
   'declare const key: unique symbol; type Payload = { [key]: string }',
 ])("rejects nominal or non-JSON object shapes: %s", (declaration) => {
   const { program, path } = fixture(`
-    import { exposeMessages, type WebMCPInvocation } from "./webmcp.js";
+    import { exposeMessages } from "./webmcp.js";
     ${declaration}
-    type Msg = { type: "send"; payload: Payload; invocation: WebMCPInvocation };
+    type Msg = { type: "send"; payload: Payload };
     exposeMessages<Msg>([{ message: "send", description: "Send" }], {});
   `);
   expect(() => generateWebMCPSchemas(program, path)).toThrow(/Unsupported/);
@@ -134,8 +136,8 @@ test.each([
 
 test("rejects open message records, including when the payload is otherwise valid", () => {
   const { program, path } = fixture(`
-    import { exposeMessages, type WebMCPInvocation } from "./webmcp.js";
-    type Msg = { type: "send"; invocation: WebMCPInvocation; [key: string]: unknown };
+    import { exposeMessages } from "./webmcp.js";
+    type Msg = { type: "send"; [key: string]: unknown };
     exposeMessages<Msg>([{ message: "send", description: "Send" }], {});
   `);
   expect(() => generateWebMCPSchemas(program, path)).toThrow(/Unsupported/);
@@ -187,11 +189,20 @@ test.each([
   ['{ message: "send", description: 42 }', /string/],
 ])("TypeScript rejects invalid tool entries: %s", (entry, error) => {
   const { program, path } = fixture(`
-    import { exposeMessages, type WebMCPInvocation } from "./webmcp.js";
-    type Msg = { type: "send"; invocation: WebMCPInvocation };
+    import { exposeMessages } from "./webmcp.js";
+    type Msg = { type: "send" };
     exposeMessages<Msg>([${entry}], {});
   `);
   const source = program.getSourceFile(path);
   if (source === undefined) throw new Error("Expected fixture source");
   expect(program.getSemanticDiagnostics(source).map((diagnostic) => ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n")).join("\n")).toMatch(error);
+});
+
+
+test("reports a missing Hypertea export instead of crashing", () => {
+  const { program, path } = fixture(`
+    import { exposeMessages } from "./webmcp.js";
+    exposeMessages<{ type: "send" }>([{ message: "send" }], {});
+  `, {}, "export function exposeMessages<Msg>(allowlist: unknown, schemas: unknown) { return []; }");
+  expect(() => generateWebMCPSchemas(program, path)).toThrow("Hypertea module is missing WebMCPInvocation");
 });

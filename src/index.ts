@@ -35,7 +35,10 @@ export function reply(result: JsonValue): Reply { return { type: replyKey, [repl
 function isReply(effect: unknown): effect is Reply {
   return typeof effect === "object" && effect !== null && replyKey in effect;
 }
-export type CallOptions = Readonly<{ origin?: EffectOrigin; signal?: AbortSignal }>;
+export const legacyCallReply = Symbol.for("hypertea.legacy-call-reply"); // Y8 sports-q162 removes compatibility.
+export type CallOptions = Readonly<{ origin?: EffectOrigin; signal?: AbortSignal;
+  [legacyCallReply]?: (complete: (result: JsonValue) => Promise<void>) => void; // Y8 sports-q162
+}>;
 export class ProgramCallError extends Error {
   constructor(readonly outcome: "cancelled-before-dispatch" | "unknown") {
     super(outcome);
@@ -232,13 +235,12 @@ export type Transition<Model, Effect extends ProgramEffect> = readonly [
 ];
 
 export type ProgramSubscriber<Msg extends ProgramMsg> = (
-  dispatch: (message: Msg, origin?: EffectOrigin) => void,
+  dispatch: (message: Msg) => void,
   context: SubscriptionContext<Msg>,
 ) => Unsubscribe;
 
 export type SubscriptionContext<Msg extends ProgramMsg = ProgramMsg> = Readonly<{
   call: (message: Msg, options?: CallOptions) => Promise<JsonValue>;
-  settle: () => Promise<void>;
 }>;
 
 export type ProgramSubscription<Msg extends ProgramMsg> = Readonly<{
@@ -706,6 +708,13 @@ export function start<Model, Msg extends ProgramMsg, Effect extends ProgramEffec
       callers.add(caller);
       owned.add(caller);
       options.signal?.addEventListener("abort", caller.reject, { once: true });
+      options[legacyCallReply]?.(result => { // Y8 sports-q162
+        if (!caller.settled) { // Y8 sports-q162
+          caller.settled = true; // Y8 sports-q162
+          try { void settle(); caller.answer(result); } catch { caller.fail(); } // Y8 sports-q162
+        } // Y8 sports-q162
+        return Promise.resolve(); // Y8 sports-q162
+      }); // Y8 sports-q162
       try { dispatch(messageAction(options.origin, caller), message); }
       catch { caller.reject(); }
       finish(caller);
@@ -721,8 +730,8 @@ export function start<Model, Msg extends ProgramMsg, Effect extends ProgramEffec
     };
     try {
       const unsubscribe = subscription.subscribe(
-        (message, origin) => { dispatch(messageAction(origin), message); },
-        { settle, call: (message, options) => call(dispatch, message, options, owned, inactive) },
+        (message) => { dispatch(messageAction(), message); },
+        { call: (message, options) => call(dispatch, message, options, owned, inactive) },
       );
       return () => { withdraw(); unsubscribe(); };
     } catch (error) {
