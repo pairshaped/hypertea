@@ -115,9 +115,7 @@ describe("VNode helpers", () => {
 
     expect(vnode.props).toEqual({});
     expect(vnode.children.map((child) => (child as VNode).tag)).toEqual([
-      "Hello ",
-      "there",
-      "2",
+      "Hello ", "there", "", "2", "", "", "",
     ]);
   });
 
@@ -133,9 +131,7 @@ describe("VNode helpers", () => {
 
     expect(Array.isArray(compiled)).toBe(true);
     expect(compiled.map((child) => (child as VNode).tag)).toEqual([
-      "Hello ",
-      "there",
-      "b",
+      "Hello ", "there", "", "b",
     ]);
   });
 
@@ -890,6 +886,75 @@ describe("TEA island runtime", () => {
 });
 
 describe("app", () => {
+  test("hydrates absent slots and adjacent text without removing server elements", async () => {
+    const mount = appendMount('<div>hello world<section><input></section><b>tail</b></div>');
+    const elements = Array.from(mount.querySelectorAll("*"));
+    const removed: Array<Node> = [];
+    const observer = new MutationObserver((records) => {
+      for (const record of records) removed.push(...record.removedNodes);
+    });
+    observer.observe(mount, { childList: true, subtree: true });
+    const input = requireElement("input") as HTMLInputElement;
+    input.value = "before mount";
+    input.focus();
+    input.setSelectionRange(2, 5);
+    app<boolean>({
+      init: false,
+      node: mount,
+      view: () => h("div", {}, undefined, "hello", false, " world", null,
+        memo(() => h("section", {}, true, h("input", {})), {}),
+        fragment(undefined, h("b", { key: "tail" }, "tail")), true),
+    });
+    await flushRender();
+    observer.disconnect();
+    expect(removed.filter((node) => node.nodeType === 1)).toEqual([]);
+    expect(Array.from(mount.querySelectorAll("*"))).toEqual(elements);
+    expect(mount.textContent).toBe("hello worldtail");
+    expect(document.activeElement).toBe(input);
+    expect(input.value).toBe("before mount");
+    expect([input.selectionStart, input.selectionEnd]).toEqual([2, 5]);
+  });
+
+  test("hydrates a matching trailing element after mismatched fallback children", async () => {
+    const mount = appendMount("<div><main>Fallback</main><footer><input></footer></div>");
+    const footer = requireElement("footer");
+    const input = requireElement("input") as HTMLInputElement;
+    input.value = "retained";
+    app<boolean>({
+      init: false,
+      node: mount,
+      view: () => h("div", {}, h("main", { key: "page" }, "Client"),
+        h("div", {}, "Extra client section"), false, h("footer", {}, h("input", {}))),
+    });
+    await flushRender();
+    expect(requireElement("footer")).toBe(footer);
+    expect(requireElement("input")).toBe(input);
+    expect(input.value).toBe("retained");
+    expect(Array.from(mount.children, node => node.tagName)).toEqual(["MAIN", "DIV", "FOOTER"]);
+  });
+
+  test.each([undefined, null, false, true])("keeps the focused input after a toggled %s child", async (absent) => {
+    const mount = appendMount("<div></div>");
+    const dispatch = app<boolean>({
+      init: false,
+      node: mount,
+      view: (shown) => h("div", {}, shown ? h("aside", {}, "Alert") : absent, h("input", {})),
+    });
+    await flushRender();
+    const input = requireElement("input") as HTMLInputElement;
+    input.value = "typing continues";
+    input.focus();
+    input.setSelectionRange(3, 7);
+    for (const shown of [true, false, true, false]) {
+      dispatch(() => shown);
+      await flushRender();
+      expect(requireElement("input")).toBe(input);
+      expect(document.activeElement).toBe(input);
+      expect(input.value).toBe("typing continues");
+      expect([input.selectionStart, input.selectionEnd]).toEqual([3, 7]);
+    }
+  });
+
   test("selects a value after creating and patching its options", async () => {
     const mount = appendMount("<div></div>");
     const chooseSecond: Action<CounterState> = (state) => ({

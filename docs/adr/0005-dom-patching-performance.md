@@ -22,6 +22,46 @@ The runtime should use head and tail scans before allocating keyed lookup struct
 
 For keyed middle patches, Hypertea should use the same head-walking shape as Hyperapp: track keyed old children, walk the old and new middle once, move known keyed DOM nodes into place, and remove stale keyed nodes after the walk. This keeps reverse and move-heavy keyed updates in Hyperapp's neighbourhood without adding public API or framework machinery.
 
+## Conditional children and hydration
+
+Absent children (`undefined`, `null`, `false` and `true`) occupy empty text
+slots. A conditional element can appear and disappear in its slot without
+shifting a later input into a different position. Nested fragments preserve
+these slots too. Empty text contributes no text content or layout box.
+
+HTML parsing drops empty text and merges adjacent text. Recycled element VNodes
+therefore use a first-patch hydration pass. It preserves a matching suffix of element tags, then restores missing empty
+slots and splits matching text runs while walking the remaining server nodes
+in order. The suffix anchors insertion when fallback markup has fewer children
+than the client view. Matching elements are patched in place. Once hydrated, the element uses ordinary keyed or unkeyed
+reconciliation. A private weak set marks recycled VNodes, with no public VNode,
+child type or `h` signature change. Server and client must still agree on the
+visible element structure; this does not infer missing server elements or repair
+arbitrary mismatched markup without replacement.
+
+Comment placeholders would require every server renderer to emit matching
+comments, or require the same first-patch alignment. They also need another node
+kind in the patcher. Requiring keys would push conditional-slot correctness into
+every caller and would not fix existing unkeyed views. Empty text slots with
+hydration keep the correction at the runtime boundary.
+
+The runtime tests toggle each absent-child kind around a focused input and check
+identity, typed value and selection through repeated updates. A MutationObserver
+fixture hydrates absent slots around adjacent text, a memoized subtree and a keyed
+sibling, asserting zero removed elements and preserved focus. Existing keyed
+reorder tests continue to cover subsequent reconciliation.
+
+The Curling applications do not currently provide matching hydration markup:
+managed admin islands replace a server loading placeholder, and the public app
+renders a semantic server fallback rather than the client's styled view.
+Zero element replacement is therefore a contract for matching-markup fixtures,
+not a claim about these application mounts. Browser verification compares both
+removed and added element counts during the first patch on Tags and public
+`/landing` against the base runtime. Neither count may increase. The form-builder
+browser check separately proves that typing through a disappearing conditional
+alert retains the same focused input. This boundary requires no server rendering
+change.
+
 ## Performance Goal
 
 Hypertea does not need to beat Hyperapp. It should stay within the same practical class for small SSR islands:
