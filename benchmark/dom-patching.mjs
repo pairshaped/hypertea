@@ -324,6 +324,7 @@ function mountRuntime(runtime, suite) {
 function installDom(html) {
   const dom = new JSDOM(html);
   globalThis.window = dom.window;
+  globalThis.Element = dom.window.Element;
   globalThis.document = dom.window.document;
   return dom;
 }

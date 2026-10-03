@@ -1,5 +1,6 @@
 const elementNodeType = 1;
 const textNodeType = 3;
+const recycledElements = new WeakSet<object>();
 const svgNamespace = "http://www.w3.org/2000/svg";
 
 const emptyObject = Object.freeze({}) as Record<PropertyKey, never>;
@@ -1056,6 +1057,7 @@ function flattenChildren<State>(
     }
 
     if (child === undefined || child === null || child === false || child === true) {
+      flattened.push(text(""));
       continue;
     }
 
@@ -1440,7 +1442,11 @@ function patchElement<State>(
     }
   }
 
-  patchChildren(element, oldVNode.children, newVNode.children, listener, nextSvg);
+  if (recycledElements.delete(oldVNode)) {
+    hydrateChildren(element, oldVNode.children, newVNode.children, listener, nextSvg);
+  } else {
+    patchChildren(element, oldVNode.children, newVNode.children, listener, nextSvg);
+  }
   patchDeferredProperties(
     element,
     newVNode.tag,
@@ -1506,6 +1512,44 @@ function patchChangedProperty(
   if (!Object.is(currentValue, newValue)) {
     patchProperty(element, key, oldValue, newValue, listener, isSvg);
   }
+}
+
+// HTML drops empty text and coalesces adjacent text. Restore those client slots
+// only on the first patch, before ordinary positional/keyed reconciliation takes over.
+function hydrateChildren<State>(
+  parent: Node,
+  oldChildren: Array<MaybeVNode<State>>,
+  newChildren: Array<MaybeVNode<State>>,
+  listener: EventListener,
+  isSvg: boolean,
+): void {
+  let oldIndex = 0;
+  for (let index = 0; index < newChildren.length; index += 1) {
+    const oldChild = oldChildren[oldIndex] as VNode<State> | undefined;
+    const newChild = maybeVNode(newChildren[index], oldChild);
+    newChildren[index] = newChild;
+    if (
+      newChild.type === textNodeType && newChild.tag === "" &&
+      !(oldChild?.type === textNodeType && oldChild.tag === "")
+    ) {
+      parent.insertBefore(createNode(newChild, listener, isSvg), oldChild?.node ?? null);
+      continue;
+    }
+    if (oldChild === undefined) {
+      parent.appendChild(createNode(newChild, listener, isSvg));
+      continue;
+    }
+    if (
+      newChild.type === textNodeType && oldChild.type === textNodeType &&
+      oldChild.tag.startsWith(newChild.tag) && oldChild.tag.length > newChild.tag.length
+    ) {
+      const remainder = (mountedVNode(oldChild).node as Text).splitText(newChild.tag.length);
+      oldChildren.splice(oldIndex + 1, 0, text(remainder.data, remainder));
+    }
+    patch(parent, mountedVNode(oldChild).node, oldChild, newChild, listener, isSvg);
+    oldIndex += 1;
+  }
+  removeOldChildren(parent, oldChildren, oldIndex, oldChildren.length - 1);
 }
 
 function patchChildren<State>(
@@ -1919,11 +1963,13 @@ function recycleNode<State>(node: Node): VNode<State> {
     return text(node.nodeValue, node);
   }
 
-  return createVNode(
+  const recycled = createVNode(
     node.nodeName.toLowerCase(),
     emptyObject,
     Array.from(node.childNodes, (child) => recycleNode<State>(child)),
     elementNodeType,
     node,
   );
+  recycledElements.add(recycled);
+  return recycled;
 }
