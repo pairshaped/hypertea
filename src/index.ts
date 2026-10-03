@@ -47,6 +47,7 @@ type Caller = {
   settled: boolean;
   answer: (value: JsonValue) => void;
   reject: () => void;
+  fail: () => void;
 };
 
 /** Origin belongs to an effect's dispatch, including its asynchronous continuations. */
@@ -643,7 +644,10 @@ export function start<Model, Msg extends ProgramMsg, Effect extends ProgramEffec
     let deliver: (() => void) | undefined;
     if (answer !== undefined && caller !== undefined && !caller.settled) {
       caller.settled = true;
-      deliver = () => { void settle(); caller.answer(answer[replyKey]); };
+      deliver = () => {
+        try { void settle(); caller.answer(answer[replyKey]); }
+        catch { caller.fail(); }
+      };
     }
     const effects = nextEffects.filter((effect): effect is Effect => !isReply(effect));
     return [next,
@@ -691,7 +695,9 @@ export function start<Model, Msg extends ProgramMsg, Effect extends ProgramEffec
         pending: 1, settled: false,
         answer: value => { cleanup(); resolve(value); },
         reject: () => {
-          if (caller.settled) return;
+          if (!caller.settled) caller.fail();
+        },
+        fail: () => {
           caller.settled = true;
           cleanup();
           reject(new ProgramCallError("unknown"));

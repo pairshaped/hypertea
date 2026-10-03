@@ -31,7 +31,9 @@ test("a reply flushes hidden-tab rendering before effects and survives teardown"
   const frames: Array<FrameRequestCallback> = [];
   vi.stubGlobal("requestAnimationFrame", (frame: FrameRequestCallback) => { frames.push(frame); return 1; });
   vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+  let rendered: Promise<void> | undefined;
   let renders = 0;
+  let effectText: string | null | undefined;
   let call: SubscriptionContext<Msg>["call"] | undefined;
   type Msg = { type: "answer" };
   const subscription = { key: "tools", subscribe: (_send: (message: Msg) => void, context: SubscriptionContext<Msg>) => {
@@ -47,12 +49,15 @@ test("a reply flushes hidden-tab rendering before effects and survives teardown"
       view: model => { renders += 1; return h("output", {}, String(model)); },
       subscriptions: model => model === 0 ? [subscription] : [],
     }),
-    runEffect: async (_send, _effect, context) => {
-      expect(node.textContent).toBe("1");
-      await context.settle();
+    runEffect: (_send, _effect, context) => {
+      effectText = node.textContent;
+      rendered = context.settle();
+      return rendered;
     },
   });
   await expect(required(call)({ type: "answer" })).resolves.toEqual({ status: "applied" });
+  await required(rendered);
+  expect(effectText).toBe("1");
   const count = renders;
   for (const frame of frames) frame(0);
   expect(renders).toBe(count);
@@ -66,6 +71,7 @@ test("calls reject on cancellation and unanswered effects, while pending chains 
   const origins: Array<EffectOrigin | undefined> = [];
   let send: ((message: Msg) => void) | undefined;
   let release: (() => void) | undefined;
+  const effectOrigins: Array<EffectOrigin | undefined> = [];
   const node = document.createElement("output");
   document.body.append(node);
   const mounted = mountProduction({ flags: undefined, node,
@@ -80,7 +86,7 @@ test("calls reject on cancellation and unanswered effects, while pending chains 
     }),
     runEffect: dispatch => {
       send = dispatch;
-      expect(effectOrigin(dispatch)).toBe("native");
+      effectOrigins.push(effectOrigin(dispatch));
       return new Promise<void>(resolve => { release = resolve; });
     },
   });
@@ -95,6 +101,7 @@ test("calls reject on cancellation and unanswered effects, while pending chains 
   required(release)();
   await expect(pending).resolves.toBe("done");
   expect(origins).toEqual([undefined, "native", "native"]);
+  expect(effectOrigins).toEqual(["native"]);
   const abort = new AbortController();
   const cancelled = mounted.call({ type: "begin" }, { origin: "native", signal: abort.signal });
   abort.abort();
@@ -231,6 +238,7 @@ test("a subscription can call during setup and see its rendered reply before the
   let pending: Promise<unknown> | undefined;
   const node = document.createElement("output");
   document.body.append(node);
+  let effectText: string | null | undefined;
   const subscription = { key: "setup", subscribe: (_send: (message: Msg) => void, context: SubscriptionContext<Msg>) => {
     pending = context.call({ type: "answer" });
     return () => { /* no resource */ };
@@ -242,8 +250,27 @@ test("a subscription can call during setup and see its rendered reply before the
       view: model => h("output", {}, String(model)),
       subscriptions: () => [subscription],
     }),
-    runEffect: () => { expect(node.textContent).toBe("0"); },
+    runEffect: () => { effectText = node.textContent; },
   });
   await expect(required(pending)).resolves.toBe("ready");
+  expect(effectText).toBe("0");
+  mounted.stop();
+});
+
+
+test("a rendering failure rejects the claimed reply instead of leaving it pending", async () => {
+  const node = document.createElement("output");
+  document.body.append(node);
+  const mounted = mountProduction({ flags: undefined, node,
+    program: defineProgram<undefined, number, { type: "answer" }, never>({
+      init: () => [0, []],
+      update: () => [1, [reply("answer")]],
+      view: model => {
+        if (model === 1) throw new Error("Cannot render");
+        return h("output", {}, String(model));
+      },
+    }),
+  });
+  await expect(mounted.call({ type: "answer" })).rejects.toMatchObject({ outcome: "unknown" });
   mounted.stop();
 });
