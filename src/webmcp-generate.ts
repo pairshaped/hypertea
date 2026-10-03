@@ -12,7 +12,6 @@ export function generateWebMCPSchemas(program: ts.Program, sourcePath: string): 
   if (source === undefined) throw new Error(`Source is not in the TypeScript program: ${sourcePath}`);
   const location: ts.Node = source;
   const checker = program.getTypeChecker();
-  let invocationType: ts.Type | undefined; // Y8 sports-q162
   const calls: Array<ts.CallExpression> = [];
   function visit(node: ts.Node): void {
     if (ts.isCallExpression(node)) {
@@ -20,11 +19,6 @@ export function generateWebMCPSchemas(program: ts.Program, sourcePath: string): 
       if (signature !== undefined && ts.isFunctionDeclaration(signature) && signature.name?.text === "exposeMessages"
         && /[/\\]webmcp\.(?:d\.)?ts$/.test(signature.getSourceFile().fileName)) {
         calls.push(node);
-        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- The resolved exported function belongs to this module.
-        const module = checker.getSymbolAtLocation(signature.getSourceFile())!;
-        const invocation = checker.getExportsOfModule(module).find((entry) => entry.name === "WebMCPInvocation"); // Y8 sports-q162
-        if (invocation === undefined) throw new Error("Hypertea module is missing WebMCPInvocation"); // Y8 sports-q162
-        invocationType = checker.getDeclaredTypeOfSymbol(invocation); // Y8 sports-q162
       }
     }
     ts.forEachChild(node, visit);
@@ -61,13 +55,7 @@ export function generateWebMCPSchemas(program: ts.Program, sourcePath: string): 
       return type.isStringLiteral() && type.value === name;
     });
     if (selected.length === 0) throw new Error(`Unknown message: ${name}`);
-    const variants = selected.map((member) => {
-      const invocation = member.getProperty("invocation"); // Y8 sports-q162
-      if (invocation !== undefined && checker.getNonNullableType(checker.getTypeOfSymbolAtLocation(invocation, location)) !== invocationType) { // Y8 sports-q162
-        throw new Error(`${name} must declare an invocation field of type WebMCPInvocation`); // Y8 sports-q162
-      }
-      return objectSchema(member, new Set([member]), true);
-    });
+    const variants = selected.map(member => objectSchema(member, new Set([member]), true));
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- Length is checked here.
     schemas[name] = variants.length === 1 ? variants[0]! : { type: "object", anyOf: variants };
   }
@@ -101,7 +89,7 @@ export function generateWebMCPSchemas(program: ts.Program, sourcePath: string): 
     const properties: Record<string, WebMCPInputSchema> = Object.create(null) as Record<string, WebMCPInputSchema>;
     const required: Array<string> = [];
     for (const field of type.getProperties()) {
-      if (message && (field.name === "type" || field.name === "invocation")) continue; // Y8 sports-q162
+      if (message && field.name === "type") continue;
       const value = checker.getTypeOfSymbolAtLocation(field, field.valueDeclaration ?? location);
       const optional = Boolean(field.flags & ts.SymbolFlags.Optional);
       properties[field.name] = schema(value, ancestors);

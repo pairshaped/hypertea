@@ -19,7 +19,6 @@ export {
   mountProgram,
   start,
   reply,
-  legacyCallReply, // Y8 sports-q162
   ProgramCallError,
   type JsonValue,
   type Reply,

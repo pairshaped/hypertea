@@ -593,7 +593,6 @@ describe("WebMCP program integration", () => {
   });
 });
 
-
 test("allowlisted messages validate before dispatch and complete through the mounted program", async () => {
   type Msg = { type: "add"; amount: number } | { type: "failed" };
   const mcpTools = exposeMessages<Msg>([{ message: "add", description: "Add a number" }], {
@@ -621,33 +620,6 @@ test("allowlisted messages validate before dispatch and complete through the mou
     await expect(agent.executeTool("add", input)).rejects.toThrow(/Invalid input/);
   }
   expect(mounted.model()).toBe(5);
-});
-
-
-// Branch-only compatibility proof. Y8 sports-q162 removes this test with the old path.
-test.each(["legacy", "reply", "render-failure"] as const)("temporary completion and reply share one caller: %s", async mode => {
-  type LegacyMsg = { type: "legacy"; invocation: import("./webmcp.js").WebMCPInvocation };
-  type LegacyEffect = import("./webmcp.js").WebMCPCompletion;
-  const bridge = createWebMCP<LegacyMsg>({ onRegistrationError: () => { throw new Error("Unexpected registration error"); } });
-  const tools = [defineWebMCPTool({ name: "legacy", description: "Migration proof", inputSchema: {}, parseInput: () => undefined,
-    toMessage: (_, invocation): LegacyMsg => ({ type: "legacy", invocation }) })];
-  const node = document.createElement("output"); document.body.append(node);
-  const mounted = mountProgram({ node, flags: undefined,
-    program: defineProgram<undefined, number, LegacyMsg, LegacyEffect>({
-      init: () => [0, []],
-      update: (_model, msg) => [1, [
-        { type: "webmcp.complete", invocation: msg.invocation, result: "old" },
-        ...(mode === "reply" ? [reply("new")] : []),
-      ]],
-      view: model => { if (model === 1 && mode === "render-failure") throw new Error("Cannot render"); return h("output", {}, model); },
-      subscriptions: () => [bridge.subscription(tools)],
-    }),
-    runEffect: async (_send, effect) => { await bridge.complete(effect); await bridge.complete(effect); },
-  });
-  stops.push(mounted.stop);
-  const pending = required(window.hyperteaAgent).executeTool("legacy", {});
-  if (mode === "render-failure") await expect(pending).rejects.toMatchObject({ outcome: "unknown" });
-  else await expect(pending).resolves.toBe(mode === "reply" ? "new" : "old");
 });
 
 test("registration failure rejects an already dispatched call", async () => {

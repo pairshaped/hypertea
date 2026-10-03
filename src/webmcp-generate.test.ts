@@ -2,19 +2,17 @@ import { resolve } from "node:path";
 import ts from "typescript";
 import { expect, test } from "vitest";
 
-import { exposeMessages, type WebMCPInvocation } from "./webmcp.js"; // Y8 sports-q162: remove compatibility metadata
+import { exposeMessages } from "./webmcp.js";
 import { generateWebMCPSchemas } from "./webmcp-generate.js";
 
-function fixture(source: string, overrides: ts.CompilerOptions = {}, moduleSource?: string) {
+function fixture(source: string, overrides: ts.CompilerOptions = {}) {
   const path = resolve("src/message-fixture.ts");
   const options: ts.CompilerOptions = { strict: true, target: ts.ScriptTarget.ESNext, module: ts.ModuleKind.NodeNext, exactOptionalPropertyTypes: true, ...overrides };
   const host = ts.createCompilerHost(options);
   const read = host.getSourceFile.bind(host);
   host.getSourceFile = (file, languageVersion, onError, shouldCreateNewSourceFile) => file === path
     ? ts.createSourceFile(file, source, languageVersion, true)
-    : moduleSource !== undefined && file === resolve("src/webmcp.ts")
-      ? ts.createSourceFile(file, moduleSource, languageVersion, true)
-      : read(file, languageVersion, onError, shouldCreateNewSourceFile);
+    : read(file, languageVersion, onError, shouldCreateNewSourceFile);
   return { path, program: ts.createProgram([path], options, host) };
 }
 
@@ -66,13 +64,19 @@ test.each([
   expect(() => generateWebMCPSchemas(program, path)).toThrow(error);
 });
 
-test("accepts an imported alias and rejects invalid invocation fields", () => {
+test("accepts an imported alias and treats root invocation as ordinary input", () => {
   const { program, path } = fixture(`
     import { exposeMessages as expose } from "./webmcp.js";
     type Msg = { type: "send"; invocation: string };
     expose<Msg>([{ message: "send", description: "Send" }], {});
   `);
-  expect(() => generateWebMCPSchemas(program, path)).toThrow(/WebMCPInvocation/);
+  const schemas = generateWebMCPSchemas(program, path);
+  expect(schemas).toEqual({ send: { type: "object", properties: { invocation: { type: "string" } }, required: ["invocation"], additionalProperties: false } });
+  const [tool] = exposeMessages<{ type: "send"; invocation: string }>([{ message: "send", description: "Send" }], schemas);
+  if (tool === undefined) throw new Error("Expected generated tool");
+  expect(tool.toMessage({ invocation: "application data" })).toEqual({ type: "send", invocation: "application data" });
+  expect(() => tool.toMessage({})).toThrow(/Invalid input/);
+  expect(() => tool.toMessage({ invocation: 1 })).toThrow(/Invalid input/);
 });
 
 test.each([
@@ -102,7 +106,7 @@ test.each([
   expect(() => generateWebMCPSchemas(program, path)).toThrow(error);
 });
 
-test("reports missing source and missing completion fields", () => {
+test("reports missing source and supports messages without input fields", () => {
   const { program, path } = fixture(`
     import { exposeMessages } from "./webmcp.js";
     type Msg = { type: "send" };
@@ -126,7 +130,6 @@ test.each([
   expect(() => generateWebMCPSchemas(program, path)).toThrow(/Unsupported/);
 });
 
-
 test.each([
   { strict: false }, { strictNullChecks: false }, { exactOptionalPropertyTypes: false },
 ])("requires compiler settings that preserve JSON input shapes: %j", (options) => {
@@ -143,37 +146,34 @@ test("rejects open message records, including when the payload is otherwise vali
   expect(() => generateWebMCPSchemas(program, path)).toThrow(/Unsupported/);
 });
 
-
-// Y8 sports-q162 converts this compatibility fixture; nested payload fields remain ordinary JSON.
 test("generated schemas validate JSON inputs and dispatch independent copies of the selected message", () => {
   const { program, path } = fixture(`
-    import { exposeMessages, type WebMCPInvocation } from "./webmcp.js"; // Y8 sports-q162: remove compatibility metadata
+    import { exposeMessages } from "./webmcp.js";
     type Payload = Readonly<{ enabled: boolean; mode: "one" | "two"; values: readonly number[];
       range: { limit: number; label: string | null }; yes: true; no: false;
-      mapped: Record<"x" | "y", number>; nested: { type: string; invocation: string } // Y8 sports-q162
+      mapped: Record<"x" | "y", number>; nested: { type: string; invocation: string }
     }> & { marker: 1 };
-    type Msg = { type: "send"; payload: Payload; invocation: WebMCPInvocation }; // Y8 sports-q162
+    type Msg = { type: "send"; payload: Payload };
     exposeMessages<Msg>([{ message: "send", description: "Send" }], {});
   `);
   const schemas = generateWebMCPSchemas(program, path);
-  const [tool] = exposeMessages<{ type: "send"; payload: unknown; invocation: WebMCPInvocation }>([{ message: "send", description: "Send" }], schemas); // Y8 sports-q162
+  const [tool] = exposeMessages<{ type: "send"; payload: unknown }>([{ message: "send", description: "Send" }], schemas);
   if (tool === undefined) throw new Error("Expected generated tool");
-  const invocation = "test" as WebMCPInvocation; // Y8 sports-q162
-  const payload = { enabled: true, mode: "one", values: [1], range: { limit: 2, label: null }, yes: true, no: false, mapped: { x: 1, y: 2 }, nested: { type: "data", invocation: "data" }, marker: 1 }; // Y8 sports-q162
-  const message = tool.toMessage({ payload }, invocation); // Y8 sports-q162
-  expect(message).toEqual({ type: "send", invocation, payload }); // Y8 sports-q162
+  const payload = { enabled: true, mode: "one", values: [1], range: { limit: 2, label: null }, yes: true, no: false, mapped: { x: 1, y: 2 }, nested: { type: "data", invocation: "data" }, marker: 1 };
+  const message = tool.toMessage({ payload });
+  expect(message).toEqual({ type: "send", payload });
   payload.values.push(3);
   expect(message.payload).toMatchObject({ values: [1] });
-  expect(tool.toMessage({ payload: { ...payload, mode: "two", enabled: false, range: { limit: 1, label: "text" } } }, invocation).type).toBe("send"); // Y8 sports-q162
+  expect(tool.toMessage({ payload: { ...payload, mode: "two", enabled: false, range: { limit: 1, label: "text" } } }).type).toBe("send");
   for (const input of [null, [], new Date(), Object.create({ payload }), { payload, extra: true }, { payload, [Symbol("extra")]: true },
     { payload: { ...payload, values: "bad" } }, { payload: { ...payload, values: [NaN] } }, { payload: { ...payload, values: Array(1) } },
     { payload: { ...payload, enabled: 1 } }, { payload: { ...payload, mode: "three" } }, { payload: { ...payload, range: { limit: 2 } } },
     { payload: { ...payload, range: { limit: 2, label: 3 } } }, { payload: { ...payload, mapped: { x: 1 } } },
-  ]) expect(() => tool.toMessage(input, invocation)).toThrow(/Invalid input/); // Y8 sports-q162
+  ]) expect(() => tool.toMessage(input)).toThrow(/Invalid input/);
   const record = Object.assign(Object.create(null) as Record<string, unknown>, { payload });
-  expect(tool.toMessage(record, invocation).type).toBe("send"); // Y8 sports-q162
+  expect(tool.toMessage(record).type).toBe("send");
   let reads = 0;
-  expect(() => tool.toMessage({ get payload() { return ++reads === 1 ? payload : "changed"; } }, invocation)).toThrow(/Invalid input/); // Y8 sports-q162
+  expect(() => tool.toMessage({ get payload() { return ++reads === 1 ? payload : "changed"; } })).toThrow(/Invalid input/);
 });
 
 test("rejects stale or missing sidecars before registering any tools", () => {
@@ -197,13 +197,4 @@ test.each([
   const source = program.getSourceFile(path);
   if (source === undefined) throw new Error("Expected fixture source");
   expect(program.getSemanticDiagnostics(source).map((diagnostic) => ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n")).join("\n")).toMatch(error);
-});
-
-
-test("reports a missing Hypertea export instead of crashing", () => {
-  const { program, path } = fixture(`
-    import { exposeMessages } from "./webmcp.js";
-    exposeMessages<{ type: "send" }>([{ message: "send" }], {});
-  `, {}, "export function exposeMessages<Msg>(allowlist: unknown, schemas: unknown) { return []; }");
-  expect(() => generateWebMCPSchemas(program, path)).toThrow("Hypertea module is missing WebMCPInvocation");
 });
