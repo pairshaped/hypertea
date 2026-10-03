@@ -765,7 +765,7 @@ describe("TEA island runtime", () => {
 
   test("provides generic browser subscriptions", async () => {
     const messages: Array<unknown> = [];
-    const context = { settle: () => Promise.resolve() };
+    const context = { call: () => Promise.reject(new Error("Unexpected program call")), settle: () => Promise.resolve() };
 
     const stopEvery = every(10, () => ({ type: "tick" })).subscribe((message) => {
       messages.push(message);

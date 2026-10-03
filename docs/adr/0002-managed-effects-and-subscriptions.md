@@ -8,15 +8,34 @@ Accepted
 
 Hypertea treats effects and subscriptions as managed runtime concepts.
 
-`update` returns `[model, effects]`. Each effect is a page-local value interpreted by the runtime's `runEffect` function. The runtime runs effects after applying the state change and passes `runEffect` a typed message dispatcher.
+`update(model, message, origin)` returns `[model, effects]`. `origin` is
+`native` or `fallback` on an attributed call chain and `undefined` on a human,
+initialization or plain subscription chain. It conveys provenance, never authority.
 
-Subscriptions are declared from model state as `ProgramSubscription<Msg>` values. The runtime starts, preserves, restarts, and stops subscriptions as state changes.
+Application effects are page-local values interpreted by `runEffect`. Each runner
+receives a dispatch bound to its own chain. It must return a promise that settles
+after its last dispatch. Pass that dispatch through unchanged so asynchronous
+continuations retain their caller and origin.
 
-Subscription callbacks receive a context with `settle()`. It waits for the
-render scheduled by the current dispatch, including when called during initial
-subscription setup. It does not wait for network or other effects. The optional
-[WebMCP adapter](0008-webmcp-program-integration.md) uses it to deliver explicit
-operation completions after the corresponding UI update has rendered.
+`reply(result)` is a runtime-owned transition value. It answers the caller on that
+chain and never reaches `runEffect`. A human chain's reply is dropped. The first
+reply wins, is secured before subscription teardown, and flushes the queued DOM
+render before the transition's effects run. A stale response replies from its own
+chain; a newer operation cannot answer it.
+
+`call(message, { origin, signal })` is available on the program handle and each
+subscription context. An already-aborted signal rejects with
+`cancelled-before-dispatch`; cancellation after dispatch, program stop, subscription
+withdrawal and a chain ending without a reply reject with `unknown`. Cancelling a
+call does not cancel its effects. Late replies are ignored.
+
+Subscriptions are declared from model state as `ProgramSubscription<Msg>` values.
+The runtime preserves or replaces instances as state changes. Calls belong to the
+issuing instance, so replacing it rejects its pending calls.
+
+`ProgramContext.settle()` and the handle's `settle()` flush queued rendering without
+waiting for an animation frame. They do not wait for network requests or effects.
+Hidden tabs therefore retain the same reply and DOM ordering as visible tabs.
 
 Ordinary application code can request effects from `update`, but it should not execute unmanaged browser or network side effects directly. Subscriptions use the same boundary: a subscription can listen to a browser or external event, but the behavior is declared through Hypertea and dispatches typed messages.
 

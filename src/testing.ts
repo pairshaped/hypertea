@@ -46,7 +46,13 @@ export function mountProgram<
   const mount = {
     ...options,
     runEffect: (dispatch: (message: Msg) => void, effect: Effect) => {
-      pendingEffects.push(Object.freeze({ effect, dispatch }));
+      return new Promise<void>(resolve => {
+        const send = Object.assign((message: Msg) => {
+          dispatch(message);
+          resolve();
+        }, dispatch);
+        pendingEffects.push(Object.freeze({ effect, dispatch: send }));
+      });
     },
   } as unknown as ProgramMount<Flags, Model, Msg, Effect>;
   const handle = mountProductionProgram(mount);

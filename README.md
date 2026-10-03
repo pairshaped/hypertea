@@ -230,7 +230,26 @@ mountIslands({
 
 `update` returns `[model, effects]`. Effectless programs omit `runEffect`; declaring a real effect type makes the runner required. Invalid or missing flags render a visible mount error and produce a console diagnostic.
 
-`mountProgram()` and `start()` return a handle with `model()`, `dispatch()`, `settle()`, and `stop()`. `settle()` waits for the currently queued DOM render. It does not wait for effects, timers, or network requests. `stop()` is idempotent and removes active subscriptions.
+`mountProgram()` and `start()` return a handle with `model()`, `dispatch()`, `call()`, `settle()`, and `stop()`. `settle()` flushes the currently queued DOM render without waiting for an animation frame. It does not wait for effects, timers, or network requests. `stop()` is idempotent and removes active subscriptions.
+
+`update(model, message, origin)` receives the chain's `native` or `fallback`
+origin, or `undefined` for human and plain subscription messages. Direct callers
+must pass that third argument. Origin is provenance, not authorization.
+
+Use `call(message, { origin, signal })` on the handle or subscription context when
+a caller needs an answer. Return `reply(jsonValue)` alongside effects in the
+transition. Hypertea routes it through the effect's own dispatch continuation,
+flushes rendering, and resolves the call. The first reply is secured before
+subscription teardown and delivered before the transition's effects run. Runners
+never interpret replies; they return a promise that settles after their last
+dispatch and use `context.settle()` for DOM coordination.
+
+A signal already aborted rejects with `ProgramCallError` outcome
+`cancelled-before-dispatch`. Later cancellation, issuing-subscription withdrawal,
+program stop or an unanswered chain rejects with `unknown`. Effects may continue
+after cancellation; late and duplicate replies are ignored. Human-chain replies
+are dropped. Superseded requests answer from their own stale responses.
+
 
 ## Field Values
 
@@ -267,7 +286,7 @@ mounted.stop()
 
 Hypertea does not start JSDOM and does not provide a query or assertion language. Use Vitest, Testing Library, and user-event in the host application. The automated suite is browserless. Check layout, pointer geometry, native drag behavior, and browser quirks manually when those paths change.
 
-The testing mount captures effects instead of running the production interpreter. `effects()` returns a frozen snapshot of pending `{ effect, dispatch }` values. `takeEffect(index)` removes one pending effect, which lets a test complete requests in any order through normal messages. Unresolved effects do not delay `settle()`, and their dispatchers cannot update a stopped program.
+The testing mount captures effects instead of running the production interpreter. `effects()` returns a frozen snapshot of pending `{ effect, dispatch }` values. `takeEffect(index)` removes one pending effect, which lets a test complete requests in any order through normal messages. Use `call()` to start a waiting chain and its captured `dispatch` to return results. A captured effect stays pending until that dispatcher is used. Unresolved effects do not delay `settle()`, and their dispatchers cannot update a stopped program.
 
 ```ts
 const mounted = mountProgram({ node, flags: searchFlags, program: searchProgram })

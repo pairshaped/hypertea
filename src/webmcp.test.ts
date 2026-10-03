@@ -193,7 +193,7 @@ describe("WebMCP program integration", () => {
     const bridge = copy.createWebMCP<{ type: "release"; invocation: WebMCPInvocation }>({ onRegistrationError: () => { throw Error("Registration failed"); } });
     const tool = copy.defineWebMCPTool({ name: "release", description: "Release", inputSchema: {}, parseInput: () => undefined, toMessage: (_, invocation) => ({ type: "release" as const, invocation }) });
     const subscription = bridge.subscription([tool]);
-    const unsubscribe = subscription.subscribe((msg) => { void bridge.complete({ type: "webmcp.complete", invocation: msg.invocation, result: "released" }); }, { settle: () => Promise.resolve() });
+    const unsubscribe = subscription.subscribe((msg) => { void bridge.complete({ type: "webmcp.complete", invocation: msg.invocation, result: "released" }); }, { call: () => Promise.reject(new Error("Unexpected program call")), settle: () => Promise.resolve() });
     stops.push(unsubscribe);
     expect(window.hyperteaAgent).toBe(agent);
     expect(agent.getTools().map((t) => t.name)).toEqual(["save", "release"]);
@@ -550,14 +550,14 @@ describe("WebMCP program integration", () => {
   test("a bridge cannot be shared by simultaneous program subscriptions", () => {
     installBrowser();
     const { bridge } = mountAsyncCounter();
-    expect(() => bridge.subscription([]).subscribe(() => undefined, { settle: () => Promise.resolve() }))
+    expect(() => bridge.subscription([]).subscribe(() => undefined, { call: () => Promise.reject(new Error("Unexpected program call")), settle: () => Promise.resolve() }))
       .toThrow("Create one WebMCP bridge per mounted program");
   });
 
   test("subscriptions are safe when there is no document", () => {
     vi.stubGlobal("document", undefined);
     const bridge = createWebMCP({ onRegistrationError: () => ({ type: "error" }) });
-    const stop = bridge.subscription([]).subscribe(() => undefined, { settle: () => Promise.resolve() });
+    const stop = bridge.subscription([]).subscribe(() => undefined, { call: () => Promise.reject(new Error("Unexpected program call")), settle: () => Promise.resolve() });
     stop();
   });
 

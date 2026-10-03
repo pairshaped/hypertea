@@ -27,6 +27,28 @@ export type ProgramEffect = Readonly<{ type: string }>;
 export type EffectOrigin = "native" | "fallback";
 const effectOriginKey = Symbol.for("hypertea.effect.origin.v1");
 
+export type JsonValue = string | number | boolean | null
+  | ReadonlyArray<JsonValue> | Readonly<{ [key: string]: JsonValue }>;
+const replyKey = Symbol.for("hypertea.reply.v1");
+export type Reply = Readonly<{ type: typeof replyKey; [replyKey]: JsonValue }>;
+export function reply(result: JsonValue): Reply { return { type: replyKey, [replyKey]: result }; }
+function isReply(effect: unknown): effect is Reply {
+  return typeof effect === "object" && effect !== null && replyKey in effect;
+}
+export type CallOptions = Readonly<{ origin?: EffectOrigin; signal?: AbortSignal }>;
+export class ProgramCallError extends Error {
+  constructor(readonly outcome: "cancelled-before-dispatch" | "unknown") {
+    super(outcome);
+    this.name = "ProgramCallError";
+  }
+}
+type Caller = {
+  pending: number;
+  settled: boolean;
+  answer: (value: JsonValue) => void;
+  reject: () => void;
+};
+
 /** Origin belongs to an effect's dispatch, including its asynchronous continuations. */
 export function effectOrigin(dispatch: object): EffectOrigin | undefined {
   return (dispatch as { readonly [effectOriginKey]?: EffectOrigin })[effectOriginKey];
@@ -205,15 +227,16 @@ export type Viewport = Readonly<{
 
 export type Transition<Model, Effect extends ProgramEffect> = readonly [
   model: Model,
-  effects: ReadonlyArray<Effect>,
+  effects: ReadonlyArray<Effect | Reply>,
 ];
 
 export type ProgramSubscriber<Msg extends ProgramMsg> = (
   dispatch: (message: Msg, origin?: EffectOrigin) => void,
-  context: SubscriptionContext,
+  context: SubscriptionContext<Msg>,
 ) => Unsubscribe;
 
-export type SubscriptionContext = Readonly<{
+export type SubscriptionContext<Msg extends ProgramMsg = ProgramMsg> = Readonly<{
+  call: (message: Msg, options?: CallOptions) => Promise<JsonValue>;
   settle: () => Promise<void>;
 }>;
 
@@ -225,6 +248,7 @@ export type ProgramSubscription<Msg extends ProgramMsg> = Readonly<{
 export type ProgramContext<Flags> = Readonly<{
   flags: Flags;
   node: HTMLElement;
+  settle: () => Promise<void>;
 }>;
 
 export type Program<
@@ -234,7 +258,7 @@ export type Program<
   Effect extends ProgramEffect,
 > = Readonly<{
   init: (flags: Flags) => Transition<Model, Effect>;
-  update: (model: Model, message: Msg) => Transition<Model, Effect>;
+  update: (model: Model, message: Msg, origin: EffectOrigin | undefined) => Transition<Model, Effect>;
   view: (model: Model) => VNode<Model>;
   subscriptions?: (
     model: Model,
@@ -245,13 +269,14 @@ export type Program<
 export type ProgramHandle<Model, Msg extends ProgramMsg> = Readonly<{
   model: () => Model;
   dispatch: (message: Msg) => void;
+  call: (message: Msg, options?: CallOptions) => Promise<JsonValue>;
   settle: () => Promise<void>;
   stop: () => void;
 }>;
 
 type RuntimeBase<Model, Msg extends ProgramMsg, Effect extends ProgramEffect> = Readonly<{
   init: () => Transition<Model, Effect>;
-  update: (model: Model, message: Msg) => Transition<Model, Effect>;
+  update: (model: Model, message: Msg, origin: EffectOrigin | undefined) => Transition<Model, Effect>;
   view: (model: Model) => VNode<Model>;
   subscriptions?: (model: Model) => ReadonlyArray<ProgramSubscription<Msg>>;
   node: Element;
@@ -603,40 +628,101 @@ export function start<Model, Msg extends ProgramMsg, Effect extends ProgramEffec
 ): ProgramHandle<Model, Msg> {
   const [state, effects] = runtime.init();
 
-  const messageAction = (origin?: EffectOrigin): Action<Model, Msg> => (model, message) => {
-    const [next, nextEffects] = runtime.update(model, message);
-    return [next, ...nextEffects.map(effect => toEffectTuple(effect, origin))];
+  const callers = new Set<Caller>();
+  let stopped = false;
+  let settleRender: () => Promise<void>;
+  const settle = (): Promise<void> => settleRender();
+  const finish = (caller: Caller): void => {
+    caller.pending -= 1;
+    if (caller.pending === 0 && !caller.settled) caller.reject();
+  };
+  const messageAction = (origin?: EffectOrigin, caller?: Caller): Action<Model, Msg> => (model, message) => {
+    const [next, nextEffects] = runtime.update(model, message, origin);
+    // Secure the first answer before update can withdraw its subscription.
+    const answer = nextEffects.find(isReply);
+    let deliver: (() => void) | undefined;
+    if (answer !== undefined && caller !== undefined && !caller.settled) {
+      caller.settled = true;
+      deliver = () => { void settle(); caller.answer(answer[replyKey]); };
+    }
+    const effects = nextEffects.filter((effect): effect is Effect => !isReply(effect));
+    return [next,
+      ...(deliver === undefined ? [] : [[deliver, undefined] as const]),
+      ...effects.map(effect => toEffectTuple(effect, origin, caller))];
   };
   const dispatchMessage = messageAction();
 
-  const toEffectTuple = (effect: Effect, origin?: EffectOrigin): ProgramEffectTuple<Model, Effect> => [
-    (dispatch, payload) => {
-      const runEffect = runtime.runEffect;
-      if (runEffect === undefined) throw new Error("Effectless programs cannot produce effects");
-      const send = Object.assign((message: Msg) => { dispatch(messageAction(origin), message); },
-        { [effectOriginKey]: origin });
-      return runEffect(send, payload);
-    },
-    effect,
-  ];
-
-  const runSubscriber: Subscriber<Model, ProgramSubscription<Msg>> = (
-    dispatch,
-    subscription,
-  ) => {
-    return subscription.subscribe(
-      (message, origin) => {
-        dispatch(messageAction(origin), message);
-      },
-      {
-        settle: async () => {
-          // Subscriptions start during createApp. Let initialization and the
-          // dispatch that requested settlement finish scheduling their render.
-          await Promise.resolve();
-          await controller.settle();
+  const toEffectTuple = (effect: Effect, origin?: EffectOrigin, caller?: Caller): ProgramEffectTuple<Model, Effect> => {
+    if (caller !== undefined) caller.pending += 1;
+    return [
+      (dispatch, payload) => {
+        const runEffect = runtime.runEffect;
+        if (runEffect === undefined) throw new Error("Effectless programs cannot produce effects");
+        const send = Object.assign((message: Msg) => { dispatch(messageAction(origin, caller), message); },
+          { [effectOriginKey]: origin });
+        if (caller === undefined) return runEffect(send, payload);
+        try {
+          return Promise.resolve(runEffect(send, payload)).then(
+            () => { finish(caller); },
+            () => { caller.reject(); finish(caller); },
+          );
+        } catch {
+          caller.reject();
+          finish(caller);
         }
       },
-    );
+      effect,
+    ];
+  };
+
+  const call = (
+    dispatch: Dispatch<Model>, message: Msg, options: CallOptions = {},
+    owned: Set<Caller> = callers, inactive = false,
+  ): Promise<JsonValue> => {
+    if (options.signal?.aborted === true) return Promise.reject(new ProgramCallError("cancelled-before-dispatch"));
+    if (stopped || inactive) return Promise.reject(new ProgramCallError("unknown"));
+    return new Promise((resolve, reject) => {
+      const cleanup = (): void => {
+        callers.delete(caller);
+        owned.delete(caller);
+        options.signal?.removeEventListener("abort", caller.reject);
+      };
+      const caller: Caller = {
+        pending: 1, settled: false,
+        answer: value => { cleanup(); resolve(value); },
+        reject: () => {
+          if (caller.settled) return;
+          caller.settled = true;
+          cleanup();
+          reject(new ProgramCallError("unknown"));
+        },
+      };
+      callers.add(caller);
+      owned.add(caller);
+      options.signal?.addEventListener("abort", caller.reject, { once: true });
+      try { dispatch(messageAction(options.origin, caller), message); }
+      catch { caller.reject(); }
+      finish(caller);
+    });
+  };
+
+  const runSubscriber: Subscriber<Model, ProgramSubscription<Msg>> = (dispatch, subscription) => {
+    const owned = new Set<Caller>();
+    let inactive = false;
+    const withdraw = (): void => {
+      inactive = true;
+      for (const caller of owned) caller.reject();
+    };
+    try {
+      const unsubscribe = subscription.subscribe(
+        (message, origin) => { dispatch(messageAction(origin), message); },
+        { settle, call: (message, options) => call(dispatch, message, options, owned, inactive) },
+      );
+      return () => { withdraw(); unsubscribe(); };
+    } catch (error) {
+      withdraw();
+      throw error;
+    }
   };
 
   const toSubscriptionTuple = (
@@ -645,7 +731,7 @@ export function start<Model, Msg extends ProgramMsg, Effect extends ProgramEffec
     return [runSubscriber, subscription];
   };
 
-  const init: Dispatchable<Model> = [state, ...effects.map(effect => toEffectTuple(effect))];
+  const init: Dispatchable<Model> = [state, ...effects.filter((effect): effect is Effect => !isReply(effect)).map(effect => toEffectTuple(effect))];
   const props: App<Model> = {
     init,
     view: (model: Model) =>
@@ -666,6 +752,7 @@ export function start<Model, Msg extends ProgramMsg, Effect extends ProgramEffec
           ...props,
           subscriptions: (model) => subscriptions(model).map(toSubscriptionTuple),
         },
+    app => { settleRender = app.settle; },
   );
 
   return {
@@ -673,8 +760,13 @@ export function start<Model, Msg extends ProgramMsg, Effect extends ProgramEffec
     dispatch: (message) => {
       controller.dispatch(dispatchMessage, message);
     },
+    call: (message, options) => call(controller.dispatch, message, options),
     settle: controller.settle,
-    stop: controller.stop,
+    stop: () => {
+      stopped = true;
+      for (const caller of callers) caller.reject();
+      controller.stop();
+    },
   };
 }
 
@@ -686,7 +778,7 @@ export function mountProgram<
 >(options: ProgramMount<Flags, Model, Msg, Effect>): ProgramHandle<Model, Msg> {
   const { flags, node, program } = options;
   let currentNode = node;
-  const context = { flags, get node() { return currentNode; } } as ProgramContext<Flags>;
+  const context = { flags, get node() { return currentNode; }, settle: async () => { await Promise.resolve(); await handle.settle(); } } as ProgramContext<Flags>;
   const subscriptions = program.subscriptions;
   const runEffect = options.runEffect;
   const runtime = {
@@ -708,7 +800,8 @@ export function mountProgram<
         }),
   } as unknown as Runtime<Model, Msg, Effect>;
 
-  return start(runtime);
+  const handle = start(runtime);
+  return handle;
 }
 
 export function mountIslands<
@@ -790,7 +883,7 @@ function createApp<State>({
   dispatch = identityDispatch,
   init = emptyObject,
   nodeChanged,
-}: App<State>): AppController<State> {
+}: App<State>, ready?: (controller: AppController<State>) => void): AppController<State> {
   let vdom: VNode<State> | undefined =
     node === undefined ? undefined : recycleNode<State>(node);
   let runningSubscriptions: Array<RunningSubscription<State> | undefined> = [];
@@ -799,6 +892,7 @@ function createApp<State>({
   let busy = false;
   let pendingRender = Promise.resolve();
   let finishRender: (() => void) | undefined;
+  let flush: (() => void) | undefined;
 
   const stop = (): void => {
     if (!active) {
@@ -831,20 +925,14 @@ function createApp<State>({
       return;
     }
 
-    if (subscriptions !== undefined) {
-      runningSubscriptions = patchSubscriptions(
-        runningSubscriptions,
-        subscriptions(state),
-        managedDispatch,
-      );
-    }
-
     if (view !== undefined && node !== undefined && !busy) {
       busy = true;
       pendingRender = new Promise((resolve) => {
         finishRender = resolve;
       });
-      enqueue(() => {
+      const render = (): void => {
+        if (flush !== render) return;
+        flush = undefined;
         busy = false;
         try {
           if (active && state !== undefined && node !== undefined) {
@@ -868,7 +956,16 @@ function createApp<State>({
           finishRender?.();
           finishRender = undefined;
         }
-      });
+      };
+      flush = render;
+      enqueue(render);
+    }
+    if (subscriptions !== undefined) {
+      runningSubscriptions = patchSubscriptions(
+        runningSubscriptions,
+        subscriptions(state),
+        managedDispatch,
+      );
     }
   };
 
@@ -908,14 +1005,15 @@ function createApp<State>({
     runDispatchable(dispatchable, payload);
   });
 
-  managedDispatch(init);
-
-  return {
+  const controller = {
     dispatch: managedDispatch,
     model: () => state as State,
-    settle: () => pendingRender,
+    settle: () => { flush?.(); return pendingRender; },
     stop,
   };
+  ready?.(controller);
+  managedDispatch(init);
+  return controller;
 }
 
 function identityDispatch<State>(dispatch: Dispatch<State>): Dispatch<State> {
