@@ -409,3 +409,37 @@ simulated async actions.
 - [0006: Browserless Program Testing](docs/adr/0006-browserless-program-testing.md)
 - [0007: Field Value Ownership After Mount](docs/adr/0007-field-value-ownership.md)
 - [0008: WebMCP uses program calls and replies](docs/adr/0008-webmcp-program-integration.md)
+
+
+## Document page state
+
+Import `registerPageState`, `pageStateReader` and `decidePageConfirmation` from
+`@pairshaped/hypertea/page-state`. This optional effect module shares one registry
+and unload listener across independently bundled mounts in the same document.
+The core Program entry does not import it.
+
+Register from a mount ownership subscription. Publish a pure model projection in
+a separate fixed subscription slot with the projection as an explicit non-function
+payload. Changing only a subscription closure keeps its old payload in the runtime.
+Keep child subscription slots stable so publishing state cannot cancel their calls.
+Dispose the registration on stop; publication cleanup must leave ownership intact.
+
+A projection separates `hasUnsavedChanges` from `protectBeforeUnload`. Pending or
+uncertain writes can require protection without a dirty draft. A missing projection
+or no live owners yields `type: "unavailable"`, which consumers must never treat as
+clean. Only known protection predicates warn; unavailable legacy pages retain their
+existing guard until their adapter migration.
+
+Cards contain immutable plain-text summaries and ordered label/value strings.
+Their opaque handles belong to a live mount and pending cycle. Scope, token,
+revision or material changes invalidate them. Consume a handle through the human
+surface's decision helper, then revalidate the current model in the target Program
+before dispatching its typed Confirm/Cancel message. A feature's revision must cover
+the exact action payload and eligibility. The bridge does not infer business rules.
+
+Shells can use a type-only `PageStateReader` import and discover the read-only port
+at `document[Symbol.for("hypertea.page-state.reader.v1")]`, then listen for
+`hypertea:page-state-available` on that document. Subscribe and read immediately.
+Retained readers stay valid after the final owner stops and a new one registers.
+The decision helper belongs on the lazy human surface. It starts a plain target
+subscription chain; never forward through an effect's attributed dispatch.

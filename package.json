@@ -34,6 +34,10 @@
     "./webmcp/generate": {
       "types": "./dist/webmcp-generate.d.ts",
       "import": "./dist/webmcp-generate.js"
+    },
+    "./page-state": {
+      "types": "./dist/page-state.d.ts",
+      "import": "./dist/page-state.js"
     }
   },
   "files": [
