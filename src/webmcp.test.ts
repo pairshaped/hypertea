@@ -643,3 +643,97 @@ test("adapter preserves a pre-dispatch rejection from its subscription call boun
   stops.push(stop);
   await expect(required(window.hyperteaAgent).executeTool("read", {})).rejects.toMatchObject({ outcome: "cancelled-before-dispatch" });
 });
+
+
+function jsonTool() {
+  const [tool] = exposeMessages<{type: "replace"; document: unknown}>([{message: "replace", description: "Replace a JSON document"}], {
+    replace: {type: "object", properties: {document: {"x-hypertea-json-value": true}}, required: ["document"], additionalProperties: false},
+  });
+  if (tool === undefined) throw new Error("Missing JSON tool");
+  return tool;
+}
+
+test("JSON field preserves finite values and shared subobjects in a detached copy", () => {
+  const shared = {text: "club", values: [null, true, false, 1.5]};
+  const document = Object.assign(Object.create(null) as Record<string, unknown>, {left: shared, right: shared, toJSON: "ordinary data"});
+  const message = jsonTool().toMessage({document});
+  expect(message.document).toEqual({left: shared, right: shared, toJSON: "ordinary data"});
+  shared.text = "changed";
+  expect(message.document).toMatchObject({left: {text: "club"}, right: {text: "club"}});
+  expect(document.left).toBe(shared);
+  expect(() => jsonTool().toMessage({document, extra: true})).toThrow(/Invalid input/);
+  expect(() => jsonTool().toMessage({})).toThrow(/Invalid input/);
+});
+
+test.each([undefined, () => 1, Symbol("bad"), 1n, NaN, Infinity, -Infinity,
+  {nested: undefined}, [undefined], new Array(1), new Date(), Object.assign([], {extra: true}),
+  Object.defineProperty({}, "hidden", {value: "ignored", enumerable: false}),
+  {[Symbol("hidden")]: 1}, {toJSON: () => ({safe: true})},
+])("JSON field refuses non-JSON case %#", document => {
+  expect(() => jsonTool().toMessage({document})).toThrow(/Invalid input/);
+});
+
+test("JSON field refuses cycles, getters, custom prototypes and throwing descriptor traps", () => {
+  const cycle: {next?: unknown} = {}; cycle.next = cycle;
+  const getter = vi.fn(() => "unsafe");
+  const accessor = Object.defineProperty({}, "value", {enumerable: true, get: getter});
+  const accessorArray = Object.defineProperty([1], "0", {enumerable: true, get: getter});
+  const custom = Object.create({toJSON: getter}) as object;
+  const throwing = new Proxy({}, {ownKeys: () => {throw new Error("trap");}});
+  for (const document of [cycle, accessor, accessorArray, custom, throwing])
+    expect(() => jsonTool().toMessage({document})).toThrow(/Invalid input/);
+  expect(getter).not.toHaveBeenCalled();
+});
+
+test("JSON admission never invokes proxy reads or custom serialization", () => {
+  const read = vi.fn(() => {throw new Error("read trap");});
+  const document = new Proxy({safe: "descriptor data"}, {get: read});
+  expect(jsonTool().toMessage({document})).toEqual({type: "replace", document: {safe: "descriptor data"}});
+  expect(read).not.toHaveBeenCalled();
+});
+
+test("JSON admission rejects operation array accessors before schema traversal", () => {
+  const [tool] = exposeMessages<{type: "replace"; operations: unknown}>([{message: "replace", description: "Replace"}], {
+    replace: {type: "object", properties: {operations: {type: "array", items: {type: "object", properties: {document: {"x-hypertea-json-value": true}}, required: ["document"], additionalProperties: false}}}, required: ["operations"], additionalProperties: false},
+  });
+  if (tool === undefined) throw new Error("Missing tool");
+  const getter = vi.fn(() => ({document: {}}));
+  const operations = Object.defineProperty([{}], "0", {enumerable: true, get: getter});
+  expect(() => tool.toMessage({operations})).toThrow(/Invalid input/);
+  expect(getter).not.toHaveBeenCalled();
+});
+
+
+test.each([Object.prototype, Array.prototype])("JSON field rejects inherited serialization without executing it %#", prototype => {
+  const serialize = vi.fn(() => ({altered: true}));
+  Object.defineProperty(prototype, "toJSON", {configurable: true, get: serialize});
+  try {
+    expect(() => jsonTool().toMessage({document: []})).toThrow(/Invalid input/);
+    expect(serialize).not.toHaveBeenCalled();
+  } finally { Reflect.deleteProperty(prototype, "toJSON"); }
+});
+
+
+test("JSON admission refuses data that becomes non-JSON between validation and copy", () => {
+  let reads = 0;
+  const input = new Proxy({document: {}}, {getOwnPropertyDescriptor(target, key) {
+    const descriptor = Reflect.getOwnPropertyDescriptor(target, key);
+    return key === "document" ? {...descriptor, value: ++reads <= 3 ? {} : undefined} : descriptor;
+  }});
+  expect(() => jsonTool().toMessage(input)).toThrow(/Invalid input/);
+  expect(reads).toBe(4);
+});
+
+test("JSON admission rechecks closed discriminants after copying", () => {
+  const [tool] = exposeMessages<{type: "replace"; mode: "review"; document: unknown}>([{message: "replace", description: "Replace"}], {
+    replace: {type: "object", properties: {mode: {const: "review"}, document: {"x-hypertea-json-value": true}}, required: ["mode", "document"], additionalProperties: false},
+  });
+  if (tool === undefined) throw new Error("Missing tool");
+  let reads = 0;
+  const input = new Proxy({mode: "review", document: {}}, {getOwnPropertyDescriptor(target, key) {
+    const descriptor = Reflect.getOwnPropertyDescriptor(target, key);
+    return key === "mode" ? {...descriptor, value: ++reads <= 3 ? "review" : "publish"} : descriptor;
+  }});
+  expect(() => tool.toMessage(input)).toThrow(/Invalid input/);
+  expect(reads).toBe(4);
+});

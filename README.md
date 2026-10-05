@@ -338,6 +338,14 @@ webmcp.generated.ts` after changing a selected message. Add the same command wit
 TypeScript 6, `strictNullChecks`, and `exactOptionalPropertyTypes`. It does not run
 application code or include the compiler in the browser bundle.
 
+A field typed with the exported `WebMCPValue` supports a JSON document. The generator
+recognizes that declaration through imported aliases and reexports and emits
+`{"x-hypertea-json-value":true}` for that field. Outer message and operation objects
+remain closed. Both tool interfaces validate finite JSON data before and after copying;
+getters, custom serialization, cycles and non-JSON values are rejected. Arbitrary
+`unknown`, `any`, recursive types and index signatures remain unsupported. The
+application still owns document validation and authorization.
+
 Registration is a managed subscription. Removing it cancels pending callers and
 unregisters the tools. The runtime flushes queued rendering before delivering a
 reply, even in a hidden tab. Effect runners never interpret replies.

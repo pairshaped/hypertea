@@ -33,6 +33,7 @@ export type WebMCPToolMetadata = Readonly<{
 
 /** JSON input subset emitted by the message generator. */
 export type WebMCPInputSchema =
+  | Readonly<{ "x-hypertea-json-value": true }>
   | Readonly<{ type: "string" | "number" | "boolean" | "null" }>
   | Readonly<{ const: string | number | boolean }>
   | Readonly<{ anyOf: ReadonlyArray<WebMCPInputSchema>; type?: "object" }>
@@ -195,12 +196,15 @@ export function exposeMessages<Msg extends ProgramMsg>(
     return defineWebMCPTool({
       ...metadata, name, inputSchema,
       parseInput: (input: unknown) => {
-        if (!matchesInput(inputSchema, input)) throw new Error(`Invalid input for ${name}`);
-        // Copy the JSON payload so the fallback caller cannot mutate a dispatched message.
-        const copy: unknown = JSON.parse(JSON.stringify(input));
-        // A JavaScript caller can supply getters that change during copying.
-        if (!matchesInput(inputSchema, copy)) throw new Error(`Invalid input for ${name}`);
-        return copy as Record<string, unknown>;
+        try {
+          if (!matchesInput(inputSchema, input)) throw new Error("Input does not match its schema");
+          // Read data descriptors, never getters or toJSON, before the detached JSON copy.
+          const data = readJsonData(input, new Set<object>());
+          if (data === undefined) throw new Error("Input is not JSON data");
+          const copy: unknown = JSON.parse(JSON.stringify(data));
+          if (!matchesInput(inputSchema, copy)) throw new Error("Copied input does not match its schema");
+          return copy as Record<string, unknown>;
+        } catch { throw new Error(`Invalid input for ${name}`); }
       },
       // The generator proves the schema against Msg. The message type is never
       // an input property and is written last even for an invalid sidecar.
@@ -210,6 +214,7 @@ export function exposeMessages<Msg extends ProgramMsg>(
 }
 
 function matchesInput(schema: WebMCPInputSchema, input: unknown): boolean {
+  if ("x-hypertea-json-value" in schema) return readJsonData(input, new Set<object>()) !== undefined;
   if ("anyOf" in schema) return schema.anyOf.some((variant) => matchesInput(variant, input));
   if ("const" in schema) return input === schema.const;
   switch (schema.type) {
@@ -217,7 +222,10 @@ function matchesInput(schema: WebMCPInputSchema, input: unknown): boolean {
     case "number": return typeof input === "number" && Number.isFinite(input);
     case "boolean": return typeof input === "boolean";
     case "null": return input === null;
-    case "array": return Array.isArray(input) && Array.from(input as Array<unknown>).every((item) => matchesInput(schema.items, item));
+    case "array": {
+      const values = readJsonData(input, new Set<object>());
+      return Array.isArray(values) && values.every((item) => matchesInput(schema.items, item));
+    }
     case "object": {
       if (typeof input !== "object" || input === null || Array.isArray(input)) return false;
       const prototype: unknown = Object.getPrototypeOf(input);
@@ -225,10 +233,54 @@ function matchesInput(schema: WebMCPInputSchema, input: unknown): boolean {
       if (Object.getOwnPropertySymbols(input).length !== 0) return false;
       const record = input as Record<string, unknown>;
       return schema.required.every((key) => Object.hasOwn(record, key))
-        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- Own-key check establishes the schema property.
-        && Object.keys(record).every((key) => Object.hasOwn(schema.properties, key) && matchesInput(schema.properties[key]!, record[key]));
+        && Object.keys(record).every((key) => {
+          const descriptor = Object.getOwnPropertyDescriptor(record, key);
+          if (!Object.hasOwn(schema.properties, key) || descriptor === undefined || !("value" in descriptor)) return false;
+          // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- Own-key check establishes the schema property.
+          return matchesInput(schema.properties[key]!, descriptor.value);
+        });
     }
   }
+}
+
+/** Inspect data descriptors without executing getters or custom JSON serialization. */
+function readJsonData(input: unknown, ancestors: Set<object>): WebMCPValue | undefined {
+  if (input === null || typeof input === "string" || typeof input === "boolean") return input;
+  if (typeof input === "number") return Number.isFinite(input) ? input : undefined;
+  if (typeof input !== "object" || ancestors.has(input)) return undefined;
+  try {
+    const array = Array.isArray(input);
+    const prototype: unknown = Object.getPrototypeOf(input);
+    if (array ? prototype !== Array.prototype : prototype !== Object.prototype && prototype !== null) return undefined;
+    const descriptors = Object.getOwnPropertyDescriptors(input);
+    if (Reflect.ownKeys(descriptors).some(key => typeof key !== "string")) return undefined;
+    if (!Object.hasOwn(descriptors, "toJSON") && (Object.getOwnPropertyDescriptor(Object.prototype, "toJSON") !== undefined
+      || (array && Object.getOwnPropertyDescriptor(Array.prototype, "toJSON") !== undefined))) return undefined;
+    ancestors.add(input);
+    try {
+      if (array) {
+        const length: unknown = descriptors.length?.value;
+        if (typeof length !== "number" || !Number.isSafeInteger(length) || length < 0 || Object.keys(descriptors).length !== length + 1) return undefined;
+        const result: Array<WebMCPValue> = [];
+        for (let index = 0; index < length; index++) {
+          const entry = descriptors[String(index)];
+          if (entry === undefined || !("value" in entry) || entry.enumerable !== true) return undefined;
+          const value = readJsonData(entry.value, ancestors);
+          if (value === undefined) return undefined;
+          result.push(value);
+        }
+        return result;
+      }
+      const result: Record<string, WebMCPValue> = Object.create(null) as Record<string, WebMCPValue>;
+      for (const [key, entry] of Object.entries(descriptors)) {
+        if (!("value" in entry) || entry.enumerable !== true) return undefined;
+        const value = readJsonData(entry.value, ancestors);
+        if (value === undefined) return undefined;
+        result[key] = value;
+      }
+      return result;
+    } finally { ancestors.delete(input); }
+  } catch { return undefined; }
 }
 
 export type WebMCPBridge<Msg extends ProgramMsg> = Readonly<{

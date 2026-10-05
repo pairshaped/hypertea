@@ -1,3 +1,5 @@
+import { fileURLToPath } from "node:url";
+import { resolve } from "node:path";
 import ts from "typescript";
 
 import type { WebMCPInputSchema } from "./webmcp.js";
@@ -12,6 +14,22 @@ export function generateWebMCPSchemas(program: ts.Program, sourcePath: string): 
   if (source === undefined) throw new Error(`Source is not in the TypeScript program: ${sourcePath}`);
   const location: ts.Node = source;
   const checker = program.getTypeChecker();
+  const canonicalModules = new Set([
+    "./webmcp.ts", "./webmcp.d.ts", "../src/webmcp.ts", "../dist/webmcp.d.ts",
+  ].map(path => fileURLToPath(new URL(path, import.meta.url))));
+  function canonicalJson(type: ts.Type): boolean {
+    const symbol = type.aliasSymbol;
+    if (symbol === undefined) return false;
+    const declarations = symbol.getDeclarations();
+    if (declarations === undefined) return false;
+    return declarations.some(declaration => {
+      const module = declaration.getSourceFile();
+      if (!canonicalModules.has(resolve(module.fileName))) return false;
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- The canonical WebMCP source and declaration files are external modules.
+      const moduleSymbol = checker.getSymbolAtLocation(module)!;
+      return checker.getExportsOfModule(moduleSymbol).some(entry => entry.name === "WebMCPValue" && entry === symbol);
+    });
+  }
   const calls: Array<ts.CallExpression> = [];
   function visit(node: ts.Node): void {
     if (ts.isCallExpression(node)) {
@@ -62,6 +80,7 @@ export function generateWebMCPSchemas(program: ts.Program, sourcePath: string): 
   return schemas;
 
   function schema(type: ts.Type, ancestors: ReadonlySet<ts.Type>): WebMCPInputSchema {
+    if (canonicalJson(type)) return { "x-hypertea-json-value": true };
     if (ancestors.has(type)) throw new Error(`Recursive input type: ${checker.typeToString(type)}`);
     const nested = new Set([...ancestors, type]);
     if (type.isStringLiteral() || type.isNumberLiteral()) return { const: type.value };
