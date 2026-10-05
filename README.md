@@ -416,7 +416,9 @@ simulated async actions.
 Import `registerPageState`, `pageStateReader` and `decidePageConfirmation` from
 `@pairshaped/hypertea/page-state`. This optional effect module shares one registry
 and unload listener across independently bundled mounts in the same document.
-The core Program entry does not import it.
+The core Program entry does not import it. Attach the listener only while a live
+projection requires protection; the last clean transition removes it even while
+that mount remains connected.
 
 Register from a mount ownership subscription. Publish a pure model projection in
 a separate fixed subscription slot with the projection as an explicit non-function

@@ -19,7 +19,7 @@ export const pageStateAvailableEvent = "hypertea:page-state-available";
 const readerKey = Symbol.for("hypertea.page-state.reader.v1");
 const registryKey = Symbol.for("hypertea.page-state.registry.v1");
 type Entry = { readonly live: () => boolean; readonly decide: (decision: PageDecision) => void; projection: PageProjection | undefined; cards: Map<ConfirmationHandle, PageDecision> };
-type Registry = { readonly entries: Set<Entry>; readonly listeners: Set<() => void>; readonly reader: PageStateReader; readonly unload: (event: Event) => void };
+type Registry = { readonly entries: Set<Entry>; readonly listeners: Set<() => void>; readonly reader: PageStateReader; readonly unload: (event: Event) => void; readonly host: Window; guarded: boolean };
 type StateDocument = Document & { [readerKey]?: PageStateReader; [registryKey]?: Registry };
 
 /** A shell can discover this port using the versioned document symbol and only a type import. */
@@ -65,14 +65,13 @@ export function registerPageState(page: Document, live: () => boolean, decide: (
       // Browser compatibility: native BeforeUnloadEvent uses the empty return value.
       Reflect.set(event, "returnValue", "");
     };
-    registry = { entries, listeners, reader, unload };
+    registry = { entries, listeners, reader, unload, host, guarded: false };
     scope[registryKey] = registry;
     scope[readerKey] = reader;
     page.dispatchEvent(new host.Event(pageStateAvailableEvent));
   }
   const current = registry;
   const entry: Entry = { live, decide, projection: undefined, cards: new Map() };
-  if (current.entries.size === 0) host.addEventListener("beforeunload", current.unload);
   current.entries.add(entry);
   notify(current);
   return {
@@ -94,7 +93,6 @@ export function registerPageState(page: Document, live: () => boolean, decide: (
     dispose: () => {
       if (!current.entries.delete(entry)) return;
       entry.cards.clear();
-      if (current.entries.size === 0) host.removeEventListener("beforeunload", current.unload);
       notify(current);
     },
   };
@@ -110,5 +108,11 @@ function read(entries: Set<Entry>): PageState {
 }
 
 function notify(registry: Registry): void {
+  const protect = registry.reader.read().protectBeforeUnload;
+  if (protect !== registry.guarded) {
+    registry.guarded = protect;
+    if (protect) registry.host.addEventListener("beforeunload", registry.unload);
+    else registry.host.removeEventListener("beforeunload", registry.unload);
+  }
   for (const listener of registry.listeners) listener();
 }

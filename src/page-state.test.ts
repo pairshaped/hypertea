@@ -31,18 +31,24 @@ test("document reader is unavailable before publication and unprojected owners n
 test("one document guard aggregates current protection and removes only its final owner", () => {
   const add = vi.spyOn(window, "addEventListener"), remove = vi.spyOn(window, "removeEventListener");
   const a = owner(), b = owner();
-  a.publish({ ...clean, hasUnsavedChanges: true, protectBeforeUnload: true }); b.publish(clean);
+  a.publish(clean); b.publish(clean);
+  expect(add.mock.calls.filter(x => x[0] === "beforeunload")).toHaveLength(0);
+  a.publish({ ...clean, hasUnsavedChanges: true, protectBeforeUnload: true }); b.publish({ ...clean, protectBeforeUnload: true });
   expect(add.mock.calls.filter(x => x[0] === "beforeunload")).toHaveLength(1);
   const event = new Event("beforeunload", { cancelable: true }); window.dispatchEvent(event);
   expect(event.defaultPrevented).toBe(true);
   a.dispose();
   expect(pageStateReader(document)?.read()).toMatchObject({ type: "available", hasUnsavedChanges: false });
+  expect(remove.mock.calls.filter(x => x[0] === "beforeunload")).toHaveLength(0);
+  b.publish(clean);
+  expect(remove.mock.calls.filter(x => x[0] === "beforeunload")).toHaveLength(1);
   const cleanEvent = new Event("beforeunload", { cancelable: true }); window.dispatchEvent(cleanEvent);
   expect(cleanEvent.defaultPrevented).toBe(false);
   b.publish({ ...clean, protectBeforeUnload: true });
   expect(pageStateReader(document)?.read()).toMatchObject({ type: "available", hasUnsavedChanges: false, protectBeforeUnload: true });
+  expect(add.mock.calls.filter(x => x[0] === "beforeunload")).toHaveLength(2);
   b.dispose(); b.dispose();
-  expect(remove.mock.calls.filter(x => x[0] === "beforeunload")).toHaveLength(1);
+  expect(remove.mock.calls.filter(x => x[0] === "beforeunload")).toHaveLength(2);
 });
 
 test("cards are immutable, mount scoped, consumed once and invalidated by material/scope/cycle changes", () => {
