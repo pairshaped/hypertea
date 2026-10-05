@@ -222,7 +222,10 @@ function matchesInput(schema: WebMCPInputSchema, input: unknown): boolean {
     case "number": return typeof input === "number" && Number.isFinite(input);
     case "boolean": return typeof input === "boolean";
     case "null": return input === null;
-    case "array": return Array.isArray(input) && Array.from(input as Array<unknown>).every((item) => matchesInput(schema.items, item));
+    case "array": {
+      const values = readJsonData(input, new Set<object>());
+      return Array.isArray(values) && values.every((item) => matchesInput(schema.items, item));
+    }
     case "object": {
       if (typeof input !== "object" || input === null || Array.isArray(input)) return false;
       const prototype: unknown = Object.getPrototypeOf(input);

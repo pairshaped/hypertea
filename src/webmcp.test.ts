@@ -692,6 +692,17 @@ test("JSON admission never invokes proxy reads or custom serialization", () => {
   expect(read).not.toHaveBeenCalled();
 });
 
+test("JSON admission rejects operation array accessors before schema traversal", () => {
+  const [tool] = exposeMessages<{type: "replace"; operations: unknown}>([{message: "replace", description: "Replace"}], {
+    replace: {type: "object", properties: {operations: {type: "array", items: {type: "object", properties: {document: {"x-hypertea-json-value": true}}, required: ["document"], additionalProperties: false}}}, required: ["operations"], additionalProperties: false},
+  });
+  if (tool === undefined) throw new Error("Missing tool");
+  const getter = vi.fn(() => ({document: {}}));
+  const operations = Object.defineProperty([{}], "0", {enumerable: true, get: getter});
+  expect(() => tool.toMessage({operations})).toThrow(/Invalid input/);
+  expect(getter).not.toHaveBeenCalled();
+});
+
 
 test.each([Object.prototype, Array.prototype])("JSON field rejects inherited serialization without executing it %#", prototype => {
   const serialize = vi.fn(() => ({altered: true}));
