@@ -5,14 +5,19 @@ import { expect, test } from "vitest";
 import { exposeMessages } from "./webmcp.js";
 import { generateWebMCPSchemas } from "./webmcp-generate.js";
 
-function fixture(source: string, overrides: ts.CompilerOptions = {}) {
+function fixture(source: string, overrides: ts.CompilerOptions = {}, files: Readonly<Record<string, string>> = {}) {
   const path = resolve("src/message-fixture.ts");
   const options: ts.CompilerOptions = { strict: true, target: ts.ScriptTarget.ESNext, module: ts.ModuleKind.NodeNext, exactOptionalPropertyTypes: true, ...overrides };
   const host = ts.createCompilerHost(options);
   const read = host.getSourceFile.bind(host);
+  const exists = host.fileExists.bind(host);
+  const directoryExists = host.directoryExists?.bind(host);
+  host.directoryExists = directory => Object.keys(files).some(file => file.startsWith(`${resolve(directory)}/`)) || directoryExists?.(directory) === true;
+  host.fileExists = file => Object.hasOwn(files, file) || exists(file);
   host.getSourceFile = (file, languageVersion, onError, shouldCreateNewSourceFile) => file === path
     ? ts.createSourceFile(file, source, languageVersion, true)
-    : read(file, languageVersion, onError, shouldCreateNewSourceFile);
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- Own-key check establishes the virtual source.
+    : Object.hasOwn(files, file) ? ts.createSourceFile(file, files[file]!, languageVersion, true) : read(file, languageVersion, onError, shouldCreateNewSourceFile);
   return { path, program: ts.createProgram([path], options, host) };
 }
 
@@ -197,4 +202,46 @@ test.each([
   const source = program.getSourceFile(path);
   if (source === undefined) throw new Error("Expected fixture source");
   expect(program.getSemanticDiagnostics(source).map((diagnostic) => ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n")).join("\n")).toMatch(error);
+});
+
+
+test.each([
+  'import type { WebMCPValue } from "./webmcp.js";',
+  'import type { WebMCPValue as Json } from "./webmcp.js"; type WebMCPValue = Json;',
+  'import type { Json as WebMCPValue } from "./json-reexport.js";',
+])("recognizes only canonical JSON through imported aliases and reexports: %s", imports => {
+  const {program, path} = fixture(`
+    import { exposeMessages } from "./webmcp.js";
+    ${imports}
+    type Msg = {type: "propose"; operations: readonly {operation: "replace_document"; document: WebMCPValue}[]};
+    exposeMessages<Msg>([{message: "propose", description: "Propose"}], {});
+  `, {}, {[resolve("src/json-reexport.ts")]: 'export type { WebMCPValue as Json } from "./webmcp.js";'});
+  expect(generateWebMCPSchemas(program, path)).toEqual({propose: {type: "object", required: ["operations"], additionalProperties: false,
+    properties: {operations: {type: "array", items: {type: "object", required: ["operation", "document"], additionalProperties: false,
+      properties: {operation: {const: "replace_document"}, document: {"x-hypertea-json-value": true}}}}}}});
+});
+
+test.each([
+  'type WebMCPValue = string | number | boolean | null | readonly WebMCPValue[] | {readonly [key:string]: WebMCPValue};',
+  'import type { WebMCPValue } from "./spoof/webmcp.js";',
+])("rejects a spoofed canonical JSON declaration: %s", declaration => {
+  const {program, path} = fixture(`
+    import { exposeMessages } from "./webmcp.js";
+    ${declaration}
+    type Msg = {type: "send"; payload: WebMCPValue};
+    exposeMessages<Msg>([{message: "send", description: "Send"}], {});
+  `, {}, {[resolve("src/spoof/webmcp.ts")]: 'export type WebMCPValue = string | null | readonly WebMCPValue[];'});
+  if (declaration.startsWith("import")) expect(program.getSourceFile(resolve("src/spoof/webmcp.ts"))).toBeDefined();
+  expect(() => generateWebMCPSchemas(program, path)).toThrow(/Recursive|Unsupported/);
+});
+
+
+test("unresolved imported JSON names are rejected rather than treated as canonical", () => {
+  const {program, path} = fixture(`
+    import { exposeMessages } from "./webmcp.js";
+    import type { MissingJson } from "./missing-json.js";
+    type Msg = {type: "send"; payload: MissingJson};
+    exposeMessages<Msg>([{message: "send", description: "Send"}], {});
+  `);
+  expect(() => generateWebMCPSchemas(program, path)).toThrow(/Unsupported/);
 });
