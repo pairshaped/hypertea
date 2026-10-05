@@ -59,3 +59,26 @@ The exact constructors should be introduced when real islands need them.
 Lint rules should reject direct side-effect APIs from ordinary source files. Exceptions should be narrow and documented in the ESLint config.
 
 This is a safety decision, not a style preference.
+
+
+## Document state subscriptions
+
+The optional `page-state` effect module owns a versioned document registry and a
+read-only discovery port. Separately bundled mounts share this registry and one
+unload listener. Every registration has its own lifetime and current projection;
+stopping it removes only its cards and protection. Unavailable state is distinct
+from a clean draft.
+
+Mount ownership and projection publication use separate fixed subscription slots.
+The publication includes its immutable projection as a non-function payload.
+Subscriptions reconcile synchronously after the next model is installed, before
+dispatch returns, even when rendering is queued. Reads and unload protection
+therefore reflect the current model without awaiting renderer settlement. Child
+subscription positions stay stable so this publication cannot withdraw tool calls.
+
+A pending card has an opaque mount-scoped handle, feature token, scope and material
+revision. Human decisions consume the handle and enter the target's ordinary
+subscription dispatch. The target Program rejects attributed origins and checks
+its latest model identity, token, eligibility and material revision before choosing
+its canonical message. An unrelated pending tool call keeps its original caller
+and response; the human decision cannot answer it.
