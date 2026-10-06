@@ -53,6 +53,13 @@ can refuse a validated call synchronously before dispatch. Start notifications
 run only after admission and before dispatch, on both native and fallback paths.
 Human message dispatch does not pass through this adapter boundary.
 
+Built-in callers use the same registry through an invocation-scoped handle.
+Observers receive that opaque handle alongside tool metadata. A page may exempt
+its own caller from its busy guard; feature validation, tool-origin restrictions
+and other observers still apply. Each turn captures the current registrations.
+Any catalog replacement invalidates that capture before its next dispatch.
+Caller detachment cancels waiting without replaying or undoing application work.
+
 The adapter supplies native or fallback origin in its program call.
 The runtime keeps it on each effect's dispatch function and carries it into
 messages that function sends. `effectOrigin(dispatch)` exposes this attribution
