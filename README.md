@@ -382,6 +382,17 @@ ordinary human messages do not trigger it. Call the returned cleanup function
 when the page controller stops. Observers and publication belong to the document,
 so separate tabs share neither. A callback that throws prevents dispatch.
 
+Built-in assistants can use `createWebMCPCaller(document)`. Its opaque `handle`
+is passed as the second argument to admission and start callbacks for that
+caller's invocations. Compare it by identity when deciding whether an assistant's
+own busy guard applies. Other admission callbacks and the target Program's
+authorization still apply; the invocation retains the `fallback` origin.
+
+Call `capture()` at the start of a turn to read and execute the current registry.
+The captured caller refuses a tool before dispatch if its registration is removed
+or replaced. Call `stop()` on detachment. Cancellation after dispatch reports an
+unknown outcome and does not undo application work.
+
 `effectOrigin(dispatch)` from `@pairshaped/hypertea/program` returns `"native"`
 or `"fallback"` for an effect caused by a tool call, and `undefined` for a human
 or initial effect. Use the dispatch passed to that effect runner. Messages sent

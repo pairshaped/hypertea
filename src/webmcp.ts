@@ -62,7 +62,7 @@ declare global {
 }
 
 type AgentTool = Omit<WebMCPRegisteredTool, "execute"> & Readonly<{
-  execute: (input: unknown, options?: Readonly<{ signal: AbortSignal }>, origin?: EffectOrigin) => Promise<WebMCPValue>;
+  execute: (input: unknown, options?: Readonly<{ signal: AbortSignal }>, origin?: EffectOrigin, caller?: WebMCPCallerHandle) => Promise<WebMCPValue>;
 }>;
 
 type AgentPublication = {
@@ -78,9 +78,11 @@ const publicationKey = Symbol.for("hypertea.webmcp.publication.v1");
 const observersKey = Symbol.for("hypertea.webmcp.observers.v1");
 
 export type WebMCPCallObserver = Readonly<{
-  beforeDispatch?: (tool: WebMCPToolMetadata) => WebMCPValue | undefined;
-  onStart?: (tool: WebMCPToolMetadata) => void;
+  beforeDispatch?: (tool: WebMCPToolMetadata, caller?: WebMCPCallerHandle) => WebMCPValue | undefined;
+  onStart?: (tool: WebMCPToolMetadata, caller?: WebMCPCallerHandle) => void;
 }>;
+declare const callerBrand: unique symbol;
+export type WebMCPCallerHandle = Readonly<{ [callerBrand]: true }>;
 type AgentDocument = Document & {
   [publicationKey]?: AgentPublication;
   [observersKey]?: Set<WebMCPCallObserver>;
@@ -98,14 +100,44 @@ export function observeWebMCPCalls(page: Document, observer: WebMCPCallObserver)
   };
 }
 
-function admitToolCall(page: Document, tool: WebMCPToolMetadata): WebMCPValue | undefined {
+function admitToolCall(page: Document, tool: WebMCPToolMetadata, caller?: WebMCPCallerHandle): WebMCPValue | undefined {
   const observers = [...((page as AgentDocument)[observersKey] ?? [])];
   for (const observer of observers) {
-    const refusal = observer.beforeDispatch?.(tool);
+    const refusal = observer.beforeDispatch?.(tool, caller);
     if (refusal !== undefined) return refusal;
   }
-  for (const observer of observers) observer.onStart?.(tool);
+  for (const observer of observers) observer.onStart?.(tool, caller);
   return undefined;
+}
+
+/** A scoped caller uses the canonical registry and retains ordinary tool-origin authority. */
+export function createWebMCPCaller(page: Document) {
+  const handle = Object.freeze({}) as WebMCPCallerHandle;
+  const lifetime = new AbortController();
+  return {
+    handle,
+    capture: (): WebMCPAgent => {
+      const publication = (page as AgentDocument)[publicationKey];
+      const entries = new Map(publication?.entries);
+      return {
+        version: 1,
+        getTools: () => [...entries.values()].map(entry => JSON.parse(entry.metadata) as WebMCPToolMetadata),
+        executeTool: async (name, input, options) => {
+          const entry = entries.get(name);
+          const sameCatalog = publication?.entries.size === entries.size
+            && [...entries].every(([key, captured]) => publication.entries.get(key) === captured);
+          if (lifetime.signal.aborted || options?.signal.aborted === true
+            || entry === undefined || (page as AgentDocument)[publicationKey] !== publication
+            || !sameCatalog) {
+            throw new WebMCPInvocationError("cancelled-before-dispatch");
+          }
+          const signal = AbortSignal.any(options === undefined ? [lifetime.signal] : [lifetime.signal, options.signal]);
+          return entry.tool.execute(input, { signal }, "fallback", handle);
+        },
+      };
+    },
+    stop: () => { lifetime.abort(); },
+  };
 }
 
 function refreshAgentCatalog(publication: AgentPublication): void {
@@ -324,12 +356,12 @@ export function createWebMCP<Msg extends ProgramMsg>(options: Readonly<{
             const { toMessage, ...metadata } = tool;
             return {
               ...metadata,
-              execute: async (input, execution, origin = "native") => {
+              execute: async (input, execution, origin = "native", caller) => {
                 const signal = execution?.signal;
                 const cancelled = () => !active || signal?.aborted === true;
                 if (cancelled()) throw new WebMCPInvocationError("cancelled-before-dispatch");
                 const message = toMessage(input);
-                const refusal = admitToolCall(page, metadata);
+                const refusal = admitToolCall(page, metadata, caller);
                 if (refusal !== undefined) return refusal;
                 if (cancelled()) throw new WebMCPInvocationError("cancelled-before-dispatch");
                 try {

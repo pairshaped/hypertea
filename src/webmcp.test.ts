@@ -3,6 +3,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import { clicked, defineProgram, effectOrigin, h, mountProgram, reply } from "./program.js";
 import {
   createWebMCP,
+  createWebMCPCaller,
   defineWebMCPTool,
   exposeMessages,
   observeWebMCPCalls,
@@ -35,15 +36,17 @@ test("tool origin follows asynchronous effects without marking intervening human
   } });
   stops.push(mounted.stop);
   await mounted.settle();
-  for (const origin of ["native", "fallback"] as const) {
+  const caller = createWebMCPCaller(document); stops.push(caller.stop);
+  for (const origin of ["native", "fallback", "builtin"] as const) {
     const pending = origin === "native" ? required(native.get("origin")).execute({})
-      : required(window.hyperteaAgent).executeTool("origin", {});
+      : origin === "fallback" ? required(window.hyperteaAgent).executeTool("origin", {}) : caller.capture().executeTool("origin", {});
+    const attributed = origin === "builtin" ? "fallback" : origin;
     mounted.dispatch({ type: "begin" });
-    expect(observed.splice(0)).toEqual([origin, undefined]);
+    expect(observed.splice(0)).toEqual([attributed, undefined]);
     for (const finish of resume.splice(0)) finish();
     await expect(pending).resolves.toBe("done");
     await mounted.settle();
-    expect(observed.splice(0)).toEqual([origin, undefined]);
+    expect(observed.splice(0)).toEqual([attributed, undefined]);
   }
 });
 
@@ -152,7 +155,7 @@ describe("WebMCP program integration", () => {
     stops.push(observeWebMCPCalls(document, { beforeDispatch: () => undefined }));
     stops.push(observeWebMCPCalls(document, { onStart: start }));
     const pending = required(native.get("save")).execute({ amount: 7 });
-    expect(start).toHaveBeenCalledWith(expect.objectContaining({ name: "save" }));
+    expect(start).toHaveBeenCalledWith(expect.objectContaining({ name: "save" }), undefined);
     required(saves[0]).dispatch({ ...required(saves[0]).effect, type: "saved", status: "applied" });
     expect(await pending).toMatchObject({ count: 7 });
   });
@@ -736,4 +739,63 @@ test("JSON admission rechecks closed discriminants after copying", () => {
   }});
   expect(() => tool.toMessage(input)).toThrow(/Invalid input/);
   expect(reads).toBe(4);
+});
+
+test("scoped callers identify only their own invocation without changing tool origin or bypassing admission", async () => {
+  const native = installBrowser();
+  const { saves } = mountAsyncCounter();
+  const caller = createWebMCPCaller(document); stops.push(caller.stop);
+  const other = createWebMCPCaller(document); stops.push(other.stop);
+  const agent = caller.capture(), started = vi.fn();
+  stops.push(observeWebMCPCalls(document, {
+    beforeDispatch: (_tool, handle) => handle === caller.handle ? undefined : { reason: "busy" }, onStart: started,
+  }));
+  expect(agent.getTools().map(t => t.name)).toEqual(["save"]);
+  expect(await required(window.hyperteaAgent).executeTool("save", { amount: 1 })).toEqual({ reason: "busy" });
+  expect(await required(native.get("save")).execute({ amount: 1 })).toEqual({ reason: "busy" });
+  expect(await other.capture().executeTool("save", { amount: 1 })).toEqual({ reason: "busy" });
+  const pending = agent.executeTool("save", { amount: 2 });
+  expect(started).toHaveBeenCalledWith(expect.objectContaining({ name: "save" }), caller.handle);
+  expect(required(saves[0]).effect).toMatchObject({ amount: 2 });
+  required(saves[0]).dispatch({ ...required(saves[0]).effect, type: "saved", status: "applied" });
+  expect(await pending).toMatchObject({ count: 2 });
+  stops.push(observeWebMCPCalls(document, { beforeDispatch: () => "domain-refusal" }));
+  expect(await agent.executeTool("save", { amount: 9 })).toBe("domain-refusal");
+  expect(saves).toHaveLength(1);
+});
+
+test("captured caller catalog refuses missing, replaced and detached tools before dispatch", async () => {
+  const caller = createWebMCPCaller(document); stops.push(caller.stop);
+  const empty = caller.capture(); expect(empty.getTools()).toEqual([]);
+  await expect(empty.executeTool("missing", {})).rejects.toMatchObject({ outcome: "cancelled-before-dispatch" });
+  const first = mountAsyncCounter();
+  const captured = caller.capture();
+  await expect(captured.executeTool("missing", {})).rejects.toMatchObject({ outcome: "cancelled-before-dispatch" });
+  first.mounted.stop();
+  const second = mountAsyncCounter();
+  await expect(captured.executeTool("save", { amount: 1 })).rejects.toMatchObject({ outcome: "cancelled-before-dispatch" });
+  expect(second.saves).toHaveLength(0);
+  const fresh = caller.capture(); second.mounted.dispatch({ type: "replaceTools" });
+  await expect(fresh.executeTool("save", { amount: 1 })).rejects.toMatchObject({ outcome: "cancelled-before-dispatch" });
+  const beforeAddition = caller.capture();
+  const added = mountAsyncCounter(["another"]);
+  await expect(beforeAddition.executeTool("save_alternate", { amount: 1 })).rejects.toMatchObject({ outcome: "cancelled-before-dispatch" });
+  expect(second.saves).toHaveLength(0);
+  const beforeReplacement = caller.capture();
+  added.mounted.dispatch({ type: "replaceTools" });
+  await expect(beforeReplacement.executeTool("save_alternate", { amount: 1 })).rejects.toMatchObject({ outcome: "cancelled-before-dispatch" });
+});
+
+test("caller lifetime and per-call signals distinguish cancellation before dispatch from unknown after dispatch", async () => {
+  const { saves } = mountAsyncCounter();
+  const caller = createWebMCPCaller(document); stops.push(caller.stop);
+  const agent = caller.capture(), signal = new AbortController(); signal.abort();
+  await expect(agent.executeTool("save", { amount: 1 }, { signal: signal.signal })).rejects.toMatchObject({ outcome: "cancelled-before-dispatch" });
+  const live = new AbortController();
+  const pending = agent.executeTool("save", { amount: 2 }, { signal: live.signal });
+  const outcome = expect(pending).rejects.toMatchObject({ outcome: "unknown" });
+  caller.stop(); await outcome;
+  await expect(agent.executeTool("save", { amount: 3 })).rejects.toMatchObject({ outcome: "cancelled-before-dispatch" });
+  expect(saves).toHaveLength(1);
+  required(saves[0]).dispatch({ ...required(saves[0]).effect, type: "saved", status: "applied" });
 });
