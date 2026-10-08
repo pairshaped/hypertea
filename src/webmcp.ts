@@ -367,6 +367,7 @@ export function createWebMCP<Msg extends ProgramMsg>(options: Readonly<{
                 try {
                   return await context.call(message, {
                     origin,
+                    ...(caller === undefined ? {} : { caller }),
                     signal: AbortSignal.any(signal === undefined ? [registration.signal] : [registration.signal, signal]),
                   });
                 } catch (error) {

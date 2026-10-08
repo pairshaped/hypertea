@@ -246,9 +246,11 @@ dispatch and use `context.settle()` for DOM coordination.
 
 A signal already aborted rejects with `ProgramCallError` outcome
 `cancelled-before-dispatch`. Later cancellation, issuing-subscription withdrawal,
-program stop or an unanswered chain rejects with `unknown`. Effects may continue
-after cancellation; late and duplicate replies are ignored. Human-chain replies
-are dropped. Superseded requests answer from their own stale responses.
+program stop or an unanswered chain rejects with `unknown`. Cancellation retires
+that invocation: pending effect dispatchers cannot update the model or start new
+effects. Already-sent requests can still complete externally, so an unknown
+outcome must not be replayed. Duplicate terminal dispatches are ignored.
+Human-chain replies are dropped.
 
 
 ## Field Values
@@ -398,6 +400,20 @@ or `"fallback"` for an effect caused by a tool call, and `undefined` for a human
 or initial effect. Use the dispatch passed to that effect runner. Messages sent
 through it keep their origin across asynchronous continuation; a human message
 on the same mount has its own origin. Use this for telemetry, never permission.
+
+`effectInvocation(dispatch)` returns the call's frozen, read-only context:
+`{ caller?, origin?, signal, isLive }`. Each call has a unique context shared by
+all its effect continuations. The optional opaque caller is the scoped caller's
+handle; native and external fallback calls have no known handle. Human and
+initial effects have no invocation. The handle comes from the adapter, never
+from tool input. Direct program callers may supply it in `CallOptions`.
+
+Check `isLive()` immediately before a delayed business dispatch. It becomes false
+on reply, cancellation, subscription withdrawal or program stop. `signal` aborts
+on cancellation or failed/unanswered retirement, so a waiting UI can settle its
+own declined result. Successful replies retire liveness without aborting the
+transition's already-scheduled effects. Effect runners must use the returned
+context when guarding external work; Hypertea cannot undo a request already sent.
 
 The fallback does not make an agent discover tools automatically. Give it the
 calling instructions or use a browser connector that knows this convention.

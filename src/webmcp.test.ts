@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 
-import { clicked, defineProgram, effectOrigin, h, mountProgram, reply } from "./program.js";
+import { clicked, defineProgram, effectOrigin, effectInvocation, h, mountProgram, reply } from "./program.js";
 import {
   createWebMCP,
   createWebMCPCaller,
@@ -19,6 +19,7 @@ test("tool origin follows asynchronous effects without marking intervening human
   const tools = [defineWebMCPTool({ name: "origin", description: "Check origin", inputSchema: { type: "object" },
     parseInput: () => undefined, toMessage: (): Msg => ({ type: "begin" }) })];
   const observed: Array<string | undefined> = [];
+  const invocations: Array<ReturnType<typeof effectInvocation>> = [];
   const resume: Array<() => void> = [];
   const node = document.createElement("output");
   document.body.append(node);
@@ -29,6 +30,7 @@ test("tool origin follows asynchronous effects without marking intervening human
   });
   const mounted = mountProgram({ node, flags: undefined, program, runEffect: async (dispatch, effect) => {
     observed.push(effectOrigin(dispatch));
+    invocations.push(effectInvocation(dispatch));
     if (effect.type === "begin") {
       await new Promise<void>(resolve => { resume.push(resolve); });
       dispatch({ type: "continued" });
@@ -41,12 +43,18 @@ test("tool origin follows asynchronous effects without marking intervening human
     const pending = origin === "native" ? required(native.get("origin")).execute({})
       : origin === "fallback" ? required(window.hyperteaAgent).executeTool("origin", {}) : caller.capture().executeTool("origin", {});
     const attributed = origin === "builtin" ? "fallback" : origin;
+    const invocation = required(invocations[0]);
+    expect(invocation.origin).toBe(attributed);
+    expect(invocation.caller).toBe(origin === "builtin" ? caller.handle : undefined);
+    expect(invocation.isLive()).toBe(true);
     mounted.dispatch({ type: "begin" });
     expect(observed.splice(0)).toEqual([attributed, undefined]);
     for (const finish of resume.splice(0)) finish();
     await expect(pending).resolves.toBe("done");
     await mounted.settle();
     expect(observed.splice(0)).toEqual([attributed, undefined]);
+    expect(invocations.splice(0)).toEqual([invocation, undefined, invocation, undefined]);
+    expect(invocation.isLive()).toBe(false);
   }
 });
 
@@ -130,7 +138,7 @@ function mountAsyncCounter(names: ReadonlyArray<string> = ["save"]) {
   document.body.append(node);
   const mounted = mountProgram({
     node, flags: undefined, program, runEffect: (dispatch, effect) => new Promise<void>(resolve => {
-      saves.push({ effect, dispatch: message => { dispatch(message); resolve(); } });
+      saves.push({ effect, dispatch: Object.assign((message: Msg) => { dispatch(message); resolve(); }, dispatch) });
     }),
   });
   stops.push(mounted.stop);
@@ -331,7 +339,7 @@ describe("WebMCP program integration", () => {
     }
     await rejected;
     required(saves[0]).dispatch({ ...required(saves[0]).effect, type: "saved", status: "applied" });
-    expect(mounted.model().count).toBe(action === "stop" ? 0 : 4);
+    expect(mounted.model().count).toBe(0);
     if (action !== "abort") expect(window.hyperteaAgent).toBeUndefined();
   });
 
@@ -425,8 +433,8 @@ describe("WebMCP program integration", () => {
     const save = required(saves[0]);
     save.dispatch({ ...save.effect, type: "saved", status: "applied" });
     save.dispatch({ ...save.effect, type: "saved", status: "late" });
-    // Cancellation only stops the caller waiting. Application work can still apply.
-    expect(mounted.model().count).toBe(action === "stop" ? 0 : 4);
+    // An already-sent write remains unknown; retired continuations cannot update.
+    expect(mounted.model().count).toBe(0);
     if (action !== "abort") {
       expect(tools.size).toBe(0);
       await expect(tool.execute({ amount: 2 }, { signal: new AbortController().signal }))
@@ -518,8 +526,14 @@ describe("WebMCP program integration", () => {
     const signal = new AbortController().signal;
     const pending = old.execute({ amount: 2 }, { signal });
     const rejected = expect(pending).rejects.toMatchObject({ outcome: "unknown" });
+    const invocation = required(effectInvocation(required(saves[0]).dispatch));
+    expect(invocation.isLive()).toBe(true);
     mounted.dispatch({ type: "replaceTools" });
     await rejected;
+    expect(invocation.isLive()).toBe(false);
+    expect(invocation.signal.aborted).toBe(true);
+    required(saves[0]).dispatch({ ...required(saves[0]).effect, type: "saved", status: "late" });
+    expect(mounted.model().count).toBe(0);
     expect([...tools.keys()]).toEqual(["save_alternate"]);
     await expect(old.execute({ amount: 1 }, { signal })).rejects.toMatchObject({ outcome: "cancelled-before-dispatch" });
     const current = required(tools.get("save_alternate")).execute({ amount: 7 }, { signal });
@@ -634,7 +648,7 @@ test("registration failure rejects an already dispatched call", async () => {
   registration.reject(new Error("Registration failed"));
   await rejected;
   required(saves[0]).dispatch({ ...required(saves[0]).effect, type: "saved", status: "applied" });
-  expect(mounted.model().count).toBe(5);
+  expect(mounted.model().count).toBe(0);
 });
 
 test("adapter preserves a pre-dispatch rejection from its subscription call boundary", async () => {
