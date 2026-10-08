@@ -263,6 +263,32 @@ the website. It needs a browser-backed connector with access to that running
 page. Agents with only screenshots or accessibility-tree access can continue
 using the human UI; the inert catalog is not an accessibility side channel.
 
+## Letting the host decide native registration
+
+A host page can decide whether Programs register their tools with
+`document.modelContext`. Place one element in the document before any module
+script:
+
+```html
+<meta name="hypertea-webmcp-native" content="restricted">
+```
+
+`full` registers every tool natively, as it does without the element.
+`restricted` skips `registerTool` for every Program's tools while
+`window.hyperteaAgent`, the JSON catalog and scoped callers keep working. Any
+other value is treated as `restricted`.
+
+Hypertea reads the element when the first Program subscribes and keeps that
+answer for the document. Changing or removing the element later cannot widen
+it. The host must therefore render the element on the server: a script that
+installs it can run after a feature bundle has already mounted.
+
+`nativeRegistrationMode(document)` returns the fixed answer.
+`registerHostNativeTool(document, tool, { signal })` registers one tool natively
+without adding it to the fallback publication, so `getTools()` and scoped
+callers never list it. A host uses it for a tool that exists only for native
+agents.
+
 ## Verification and compatibility
 
 `pnpm check:hypertea` runs the browserless suite with 100 percent coverage. The

@@ -76,6 +76,11 @@ type AgentPublication = {
 // WeakMaps would give the shell and feature bundles competing publications.
 const publicationKey = Symbol.for("hypertea.webmcp.publication.v1");
 const observersKey = Symbol.for("hypertea.webmcp.observers.v1");
+const nativeModeKey = Symbol.for("hypertea.webmcp.native-mode.v1");
+
+/** `<meta name="hypertea-webmcp-native" content="full|restricted">` placed before any module script. */
+export const nativeRegistrationMetaName = "hypertea-webmcp-native";
+export type NativeRegistrationMode = "full" | "restricted";
 
 export type WebMCPCallObserver = Readonly<{
   beforeDispatch?: (tool: WebMCPToolMetadata, caller?: WebMCPCallerHandle) => WebMCPValue | undefined;
@@ -86,7 +91,31 @@ export type WebMCPCallerHandle = Readonly<{ [callerBrand]: true }>;
 type AgentDocument = Document & {
   [publicationKey]?: AgentPublication;
   [observersKey]?: Set<WebMCPCallObserver>;
+  [nativeModeKey]?: NativeRegistrationMode;
 };
+
+/**
+ * Whether Programs in this document register tools natively. The first read
+ * fixes the decision, so a later change to the declaration cannot widen it.
+ * Without a declaration registration is full; an unrecognized value fails closed.
+ */
+export function nativeRegistrationMode(page: Document): NativeRegistrationMode {
+  const scope = page as AgentDocument;
+  const fixed = scope[nativeModeKey];
+  if (fixed !== undefined) return fixed;
+  const declared = page.querySelector(`meta[name="${nativeRegistrationMetaName}"]`)?.getAttribute("content");
+  const mode = declared === null || declared === undefined || declared === "full" ? "full" : "restricted";
+  scope[nativeModeKey] = mode;
+  return mode;
+}
+
+/**
+ * A host registers one tool natively without adding it to the fallback
+ * publication, so `window.hyperteaAgent` and scoped callers never list it.
+ */
+export async function registerHostNativeTool(page: Document, tool: WebMCPRegisteredTool, options: Readonly<{ signal: AbortSignal; }>): Promise<void> {
+  await (page as Document & { modelContext?: ModelContext; }).modelContext?.registerTool(tool, options);
+}
 
 /** Document-scoped admission and start notifications for native and fallback calls. */
 export function observeWebMCPCalls(page: Document, observer: WebMCPCallObserver): () => void {
@@ -336,10 +365,11 @@ export function createWebMCP<Msg extends ProgramMsg>(options: Readonly<{
         tools,
         subscribe: (dispatch, context) => {
           const page = typeof document === "undefined" ? undefined : document;
-          const modelContext = (page as (Document & { modelContext?: ModelContext; }) | undefined)?.modelContext;
           if (page === undefined) return () => {
             // Server-side use has no document to publish tools into.
           };
+          const modelContext = nativeRegistrationMode(page) === "full"
+            ? (page as Document & { modelContext?: ModelContext; }).modelContext : undefined;
           if (subscribed) throw new Error("Create one WebMCP bridge per mounted program");
           subscribed = true;
           const registration = new AbortController();

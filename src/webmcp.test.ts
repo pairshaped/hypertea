@@ -6,7 +6,9 @@ import {
   createWebMCPCaller,
   defineWebMCPTool,
   exposeMessages,
+  nativeRegistrationMode,
   observeWebMCPCalls,
+  registerHostNativeTool,
   type WebMCPRegisteredTool,
 } from "./webmcp.js";
 
@@ -58,11 +60,113 @@ test("tool origin follows asynchronous effects without marking intervening human
   }
 });
 
+describe("native registration declaration", () => {
+  type Msg = Readonly<{ type: "ping" | "failed" }>;
+  const declare = (content?: string) => {
+    document.head.querySelector("meta[name=hypertea-webmcp-native]")?.remove();
+    if (content === undefined) return;
+    const meta = document.createElement("meta");
+    meta.name = "hypertea-webmcp-native";
+    meta.content = content;
+    document.head.append(meta);
+  };
+  async function mountTool(name: string, onRegistrationError: () => Msg = () => ({ type: "failed" })) {
+    const bridge = createWebMCP<Msg>({ onRegistrationError });
+    const tools = [defineWebMCPTool({ name, description: name, inputSchema: { type: "object" },
+      parseInput: () => undefined, toMessage: (): Msg => ({ type: "ping" }) })];
+    const node = document.createElement("output");
+    document.body.append(node);
+    const program = defineProgram<undefined, number, Msg, Msg>({
+      init: () => [0, []], update: model => [model, []], view: model => h("output", {}, model),
+      subscriptions: () => [bridge.subscription(tools)],
+    });
+    const mounted = mountProgram({ node, flags: undefined, program, runEffect: async () => { /* no effects */ } });
+    stops.push(mounted.stop);
+    await mounted.settle();
+  }
+  const published = () => required(window.hyperteaAgent).getTools().map(tool => tool.name).sort();
+  const reset = () => {
+    declare();
+    Reflect.deleteProperty(document, Symbol.for("hypertea.webmcp.native-mode.v1"));
+  };
+  afterEach(reset);
+
+  test("restricted skips native registration before any host script and keeps the fallback publication", async () => {
+    const native = installBrowser();
+    declare("restricted");
+    await mountTool("alpha");
+    expect([...native.keys()]).toEqual([]);
+    expect(published()).toEqual(["alpha"]);
+  });
+
+  test("full and an absent declaration register natively once", async () => {
+    for (const content of ["full", undefined]) {
+      reset();
+      const native = installBrowser();
+      declare(content);
+      await mountTool("alpha");
+      expect([...native.keys()]).toEqual(["alpha"]);
+      expect(published()).toEqual(["alpha"]);
+      for (const stop of stops.splice(0)) stop();
+      Reflect.deleteProperty(document, "modelContext");
+    }
+  });
+
+  test("the first read fixes the decision against later changes or removal", async () => {
+    const native = installBrowser();
+    declare("restricted");
+    expect(nativeRegistrationMode(document)).toBe("restricted");
+    declare("full");
+    await mountTool("alpha");
+    declare();
+    await mountTool("beta");
+    expect([...native.keys()]).toEqual([]);
+    expect(published()).toEqual(["alpha", "beta"]);
+    reset();
+    expect(nativeRegistrationMode(document)).toBe("full");
+    declare("restricted");
+    expect(nativeRegistrationMode(document)).toBe("full");
+  });
+
+  test("an unrecognized declaration fails closed", () => {
+    declare("everything");
+    expect(nativeRegistrationMode(document)).toBe("restricted");
+  });
+
+  test("registration errors still report once and remove only that bridge's fallback tools", async () => {
+    installBrowser(() => Promise.reject(new Error("refused")));
+    declare("full");
+    const reports: Array<string> = [];
+    await mountTool("alpha", () => { reports.push("alpha"); return { type: "failed" }; });
+    await vi.waitFor(() => { expect(reports).toEqual(["alpha"]); });
+    expect(window.hyperteaAgent).toBeUndefined();
+  });
+
+  test("a host-only native tool never appears in the fallback publication or a scoped caller", async () => {
+    const native = installBrowser();
+    declare("restricted");
+    await mountTool("alpha");
+    const controller = new AbortController();
+    await registerHostNativeTool(document, { name: "host", description: "Host", inputSchema: { type: "object" },
+      execute: () => Promise.resolve("ok") }, { signal: controller.signal });
+    expect([...native.keys()]).toEqual(["host"]);
+    expect(published()).toEqual(["alpha"]);
+    const caller = createWebMCPCaller(document); stops.push(caller.stop);
+    expect(caller.capture().getTools().map(tool => tool.name)).toEqual(["alpha"]);
+    controller.abort();
+    expect([...native.keys()]).toEqual([]);
+    Reflect.deleteProperty(document, "modelContext");
+    await expect(registerHostNativeTool(document, { name: "host", description: "Host", inputSchema: {},
+      execute: () => Promise.resolve("ok") }, { signal: controller.signal })).resolves.toBeUndefined();
+  });
+});
+
 afterEach(() => {
   for (const stop of stops.splice(0)) stop();
   vi.unstubAllGlobals();
   Reflect.deleteProperty(document, "modelContext");
   Reflect.deleteProperty(window, "hyperteaAgent");
+  Reflect.deleteProperty(document, Symbol.for("hypertea.webmcp.native-mode.v1"));
   document.getElementById("hypertea-agent-tools")?.remove();
   vi.useRealTimers();
   document.body.replaceChildren();
