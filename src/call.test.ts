@@ -1,5 +1,5 @@
 import { expect, test, vi } from "vitest";
-import { defineProgram, h, reply, mountProgram as mountProduction, effectOrigin, type EffectOrigin, type SubscriptionContext } from "./program.js";
+import { defineProgram, h, reply, mountProgram as mountProduction, effectOrigin, effectInvocation, type EffectOrigin, type SubscriptionContext } from "./program.js";
 import { mountProgram } from "./testing.js";
 
 test("overlapping calls answer through their own captured continuations", async () => {
@@ -108,7 +108,7 @@ test("calls reject on cancellation and unanswered effects, while pending chains 
   await expect(cancelled).rejects.toMatchObject({ outcome: "unknown" });
   required(send)({ type: "done" });
   required(release)();
-  expect(mounted.model()).toBe(3);
+  expect(mounted.model()).toBe(2);
   const unanswered = mounted.call({ type: "begin" }, { origin: "native" });
   required(release)();
   await expect(unanswered).rejects.toMatchObject({ outcome: "unknown" });
@@ -170,7 +170,7 @@ test.each(["sync", "throw", "reject", "update-throw"] as const)("unanswered %s c
   mounted.stop();
 });
 
-test("withdrawn subscription calls reject while their later messages still update", async () => {
+test("withdrawn subscription calls reject and suppress their later messages", async () => {
   type Msg = { type: "request" } | { type: "withdraw" } | { type: "done" };
   let call: SubscriptionContext<Msg>["call"] | undefined;
   const sub = { key: "calls", subscribe: (_send: (message: Msg) => void, context: SubscriptionContext<Msg>) => {
@@ -193,7 +193,7 @@ test("withdrawn subscription calls reject while their later messages still updat
   mounted.dispatch({ type: "withdraw" });
   await expect(pending).rejects.toMatchObject({ outcome: "unknown" });
   effect.dispatch({ type: "done" });
-  expect(mounted.model()).toBe(2);
+  expect(mounted.model()).toBe(1);
   await expect(required(call)({ type: "request" })).rejects.toMatchObject({ outcome: "unknown" });
   mounted.stop();
 });
@@ -272,5 +272,84 @@ test("a rendering failure rejects the claimed reply instead of leaving it pendin
     }),
   });
   await expect(mounted.call({ type: "answer" })).rejects.toMatchObject({ outcome: "unknown" });
+  mounted.stop();
+});
+
+
+test("invocation identity survives deferred continuations and retires once", async () => {
+  type Msg = { type: "begin" } | { type: "next" } | { type: "done" };
+  const node = document.createElement("output");
+  document.body.append(node);
+  const pendingEffects: Array<Readonly<{ send: (message: Msg) => void; finish: () => void }>> = [];
+  const invocations: Array<ReturnType<typeof effectInvocation>> = [];
+  const caller = Object.freeze({});
+  const mounted = mountProduction({ flags: undefined, node,
+    program: defineProgram<undefined, number, Msg, { type: "wait" }>({
+      init: () => [0, []],
+      update: (model, message) => [model + 1, message.type === "done" ? [reply("done")] : [{ type: "wait" }]],
+      view: model => h("output", {}, String(model)),
+    }),
+    runEffect: send => {
+      invocations.push(effectInvocation(send));
+      return new Promise<void>(finish => { pendingEffects.push({ send, finish }); });
+    },
+  });
+  const signal = new AbortController();
+  const pending = mounted.call({ type: "begin" }, { origin: "fallback", caller, signal: signal.signal });
+  const first = required(invocations[0]);
+  vi.resetModules();
+  const otherBundle = await import("./program.js");
+  expect(otherBundle.effectInvocation(required(pendingEffects[0]).send)).toBe(first);
+  expect(Object.isFrozen(first)).toBe(true);
+  expect(first.caller).toBe(caller);
+  expect(first.origin).toBe("fallback");
+  expect(first.isLive()).toBe(true);
+  required(pendingEffects[0]).send({ type: "next" });
+  expect(invocations[1]).toBe(first);
+  required(pendingEffects[1]).send({ type: "done" });
+  await expect(pending).resolves.toBe("done");
+  expect(first.isLive()).toBe(false);
+  required(pendingEffects[1]).send({ type: "done" });
+  expect(mounted.model()).toBe(3);
+  pendingEffects.splice(0).forEach(effect => { effect.finish(); });
+  const cancelled = mounted.call({ type: "begin" }, { origin: "native", signal: signal.signal });
+  const outcome = expect(cancelled).rejects.toMatchObject({ outcome: "unknown" });
+  const second = required(invocations[2]);
+  expect(second).not.toBe(first);
+  expect(second.caller).toBeUndefined();
+  const aborted = vi.fn();
+  second.signal.addEventListener("abort", aborted);
+  signal.abort(); signal.abort();
+  await outcome;
+  expect(second.signal.aborted).toBe(true);
+  expect(second.isLive()).toBe(false);
+  expect(aborted).toHaveBeenCalledTimes(1);
+  required(pendingEffects[0]).send({ type: "next" });
+  expect(mounted.model()).toBe(4);
+  pendingEffects.splice(0).forEach(effect => { effect.finish(); });
+  mounted.dispatch({ type: "begin" });
+  expect(invocations[3]).toBeUndefined();
+  pendingEffects.splice(0).forEach(effect => { effect.finish(); });
+  mounted.stop();
+});
+
+
+test("cancellation between effects prevents later business dispatch", async () => {
+  const signal = new AbortController();
+  const node = document.createElement("output"); document.body.append(node);
+  const sent = vi.fn();
+  const mounted = mountProduction({ flags: undefined, node,
+    program: defineProgram<undefined, number, { type: "begin" }, { type: "cancel" | "send" }>({
+      init: () => [0, []],
+      update: model => [model, [{ type: "cancel" }, { type: "send" }]],
+      view: model => h("output", {}, String(model)),
+    }),
+    runEffect: (_send, effect) => {
+      if (effect.type === "cancel") signal.abort();
+      else sent();
+    },
+  });
+  await expect(mounted.call({ type: "begin" }, { signal: signal.signal })).rejects.toMatchObject({ outcome: "unknown" });
+  expect(sent).not.toHaveBeenCalled();
   mounted.stop();
 });

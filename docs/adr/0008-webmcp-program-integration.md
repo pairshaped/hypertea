@@ -3,7 +3,7 @@
 WebMCP is an optional browser input adapter exported from
 `@pairshaped/hypertea/webmcp`. It registers tools through a managed subscription
 and maps validated inputs to ordinary typed application intent messages. The
-adapter runs each admitted message with `context.call(message, { origin, signal })`.
+adapter runs each admitted message with `context.call(message, { origin, signal, caller })`.
 The application returns `reply(result)` from its update. Hypertea routes that reply
 through the effect dispatch continuation, flushes rendering without waiting for a
 frame, and settles the call before starting the transition's effects.
@@ -28,8 +28,9 @@ when a different tool contract or unsupported payload type needs explicit parsin
 
 Removing a subscription or replacing its tools array rejects pending calls with
 `unknown`. An already-aborted signal rejects with `cancelled-before-dispatch`.
-Cancellation after dispatch does not roll back application work. The first reply
-wins; late replies are ignored. A chain that ends without a reply rejects with
+Cancellation after dispatch retires the invocation and suppresses late message
+continuations. It does not roll back already-sent work. The first reply wins;
+duplicate terminal dispatches are ignored. A chain that ends without a reply rejects with
 `unknown`. Runners must return promises that settle after their last dispatch.
 
 Each subscription publishes the same execution callbacks through native
@@ -63,8 +64,13 @@ Caller detachment cancels waiting without replaying or undoing application work.
 The adapter supplies native or fallback origin in its program call.
 The runtime keeps it on each effect's dispatch function and carries it into
 messages that function sends. `effectOrigin(dispatch)` exposes this attribution
-to effect runners without adding it to domain messages or models. Human and
-initial effects have no agent origin. Origin never grants authority. Stable
+to effect runners without adding it to domain messages or models. `effectInvocation(dispatch)` exposes a frozen per-call context with the opaque
+caller handle, original origin, cancellation signal and `isLive()` check. Every
+continuation shares that identity. A terminal reply retires liveness; cancellation,
+failed completion and owner retirement also abort its signal. Effects scheduled
+alongside a successful reply retain provenance but cannot issue further correlated
+messages. External effects must check liveness before a delayed business send.
+Human and initial effects have no invocation or agent origin. Origin never grants authority. Stable
 symbols let independently bundled adapters and effect runners share the value;
 no document-wide active-call flag controls attribution.
 

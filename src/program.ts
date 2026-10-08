@@ -10,6 +10,8 @@ export {
   dragStarted,
   every,
   effectOrigin,
+  effectInvocation,
+  type EffectInvocation,
   fragment,
   h,
   inputChanged,

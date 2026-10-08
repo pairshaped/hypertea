@@ -27,6 +27,17 @@ export type ProgramMsg = Readonly<{ type: string }>;
 export type ProgramEffect = Readonly<{ type: string }>;
 export type EffectOrigin = "native" | "fallback";
 const effectOriginKey = Symbol.for("hypertea.effect.origin.v1");
+const effectInvocationKey = Symbol.for("hypertea.effect.invocation.v1");
+/** A single call's read-only identity and lifetime, shared by its effect chain. */
+export type EffectInvocation = Readonly<{
+  caller?: object;
+  origin?: EffectOrigin;
+  signal: AbortSignal;
+  isLive: () => boolean;
+}>;
+export function effectInvocation(dispatch: object): EffectInvocation | undefined {
+  return (dispatch as { readonly [effectInvocationKey]?: EffectInvocation })[effectInvocationKey];
+}
 
 export type JsonValue = string | number | boolean | null
   | ReadonlyArray<JsonValue> | Readonly<{ [key: string]: JsonValue }>;
@@ -36,7 +47,7 @@ export function reply(result: JsonValue): Reply { return { type: replyKey, [repl
 function isReply(effect: unknown): effect is Reply {
   return typeof effect === "object" && effect !== null && replyKey in effect;
 }
-export type CallOptions = Readonly<{ origin?: EffectOrigin; signal?: AbortSignal }>;
+export type CallOptions = Readonly<{ origin?: EffectOrigin; signal?: AbortSignal; caller?: object }>;
 export class ProgramCallError extends Error {
   constructor(readonly outcome: "cancelled-before-dispatch" | "unknown") {
     super(outcome);
@@ -44,6 +55,7 @@ export class ProgramCallError extends Error {
   }
 }
 type Caller = {
+  invocation: EffectInvocation;
   pending: number;
   settled: boolean;
   answer: (value: JsonValue) => void;
@@ -638,11 +650,12 @@ export function start<Model, Msg extends ProgramMsg, Effect extends ProgramEffec
     if (caller.pending === 0 && !caller.settled) caller.reject();
   };
   const messageAction = (origin?: EffectOrigin, caller?: Caller): Action<Model, Msg> => (model, message) => {
+    if (caller?.settled === true) return model;
     const [next, nextEffects] = runtime.update(model, message, origin);
     // Secure the first answer before update can withdraw its subscription.
     const answer = nextEffects.find(isReply);
     let deliver: (() => void) | undefined;
-    if (answer !== undefined && caller !== undefined && !caller.settled) {
+    if (answer !== undefined && caller !== undefined) {
       caller.settled = true;
       deliver = () => {
         try { void settle(); caller.answer(answer[replyKey]); }
@@ -663,7 +676,8 @@ export function start<Model, Msg extends ProgramMsg, Effect extends ProgramEffec
         const runEffect = runtime.runEffect;
         if (runEffect === undefined) throw new Error("Effectless programs cannot produce effects");
         const send = Object.assign((message: Msg) => { dispatch(messageAction(origin, caller), message); },
-          { [effectOriginKey]: origin });
+          { [effectOriginKey]: origin, [effectInvocationKey]: caller?.invocation });
+        if (caller?.invocation.signal.aborted === true) { finish(caller); return; }
         if (caller === undefined) return runEffect(send, payload);
         try {
           return Promise.resolve(runEffect(send, payload)).then(
@@ -686,12 +700,20 @@ export function start<Model, Msg extends ProgramMsg, Effect extends ProgramEffec
     if (options.signal?.aborted === true) return Promise.reject(new ProgramCallError("cancelled-before-dispatch"));
     if (stopped || inactive) return Promise.reject(new ProgramCallError("unknown"));
     return new Promise((resolve, reject) => {
+      const lifetime = new AbortController();
+      const invocation: EffectInvocation = Object.freeze({
+        ...(options.caller === undefined ? {} : { caller: options.caller }),
+        ...(options.origin === undefined ? {} : { origin: options.origin }),
+        signal: lifetime.signal,
+        isLive: () => !caller.settled && !lifetime.signal.aborted,
+      });
       const cleanup = (): void => {
         callers.delete(caller);
         owned.delete(caller);
         options.signal?.removeEventListener("abort", caller.reject);
       };
       const caller: Caller = {
+        invocation,
         pending: 1, settled: false,
         answer: value => { cleanup(); resolve(value); },
         reject: () => {
@@ -700,6 +722,7 @@ export function start<Model, Msg extends ProgramMsg, Effect extends ProgramEffec
         fail: () => {
           caller.settled = true;
           cleanup();
+          lifetime.abort();
           reject(new ProgramCallError("unknown"));
         },
       };
