@@ -1547,6 +1547,9 @@ function patchElement<State>(
   const element = node as PatchableElement;
   const nextSvg = isSvg || newVNode.tag === "svg";
 
+  if ("innerHTML" in oldVNode.props && !("innerHTML" in newVNode.props)) {
+    element.innerHTML = "";
+  }
   for (const key in oldVNode.props) {
     if (patchAfterChildren(newVNode.tag, key)) continue;
     const oldValue = oldVNode.props[key];
@@ -1593,6 +1596,9 @@ function patchDeferredProperties(
   listener: EventListener,
   isSvg: boolean,
 ): void {
+  if ("innerHTML" in newProps) {
+    patchChangedProperty(element, "innerHTML", oldProps.innerHTML, newProps.innerHTML, listener, isSvg);
+  }
   if (tag !== "select") return;
   const key = "value" in newProps
     ? "value"
@@ -1607,7 +1613,8 @@ function patchDeferredProperties(
 }
 
 function patchAfterChildren(tag: string | MemoView<unknown>, key: string): boolean {
-  return tag === "select" && (key === "value" || key === "controlledValue");
+  // Retire recycled child VNodes before replacing their DOM through innerHTML.
+  return key === "innerHTML" || (tag === "select" && (key === "value" || key === "controlledValue"));
 }
 
 // The `controlled*` props mirror a DOM property but always write the declared value, so a

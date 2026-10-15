@@ -886,6 +886,26 @@ describe("TEA island runtime", () => {
 });
 
 describe("app", () => {
+  test("hydrates innerHTML after retiring recycled server children and updates it", async () => {
+    const mount = appendMount('<div><p>Server</p><a href="/old">Old</a></div>');
+    const dispatch = app<number>({
+      init: 0,
+      node: mount,
+      view: step => step === 2 ? h("div", {}, "Plain") : h("div", { innerHTML: step === 1 ? '<table><tbody><tr><td>New</td></tr></tbody></table>' : '<p>Client</p><a href="/new">New</a>' }),
+    });
+    await flushRender();
+    expect(mount.querySelector("p")?.textContent).toBe("Client");
+    expect(mount.querySelector("a")?.getAttribute("href")).toBe("/new");
+    dispatch(() => 1);
+    await flushRender();
+    expect(mount.querySelector("td")?.textContent).toBe("New");
+    expect(mount.querySelector("p")).toBeNull();
+    dispatch(() => 2);
+    await flushRender();
+    expect(mount.textContent).toBe("Plain");
+    expect(mount.querySelector("table")).toBeNull();
+  });
+
   test("hydrates absent slots and adjacent text without removing server elements", async () => {
     const mount = appendMount('<div>hello world<section><input></section><b>tail</b></div>');
     const elements = Array.from(mount.querySelectorAll("*"));
