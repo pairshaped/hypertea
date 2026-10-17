@@ -66,7 +66,7 @@ type AgentTool = Omit<WebMCPRegisteredTool, "execute"> & Readonly<{
 }>;
 
 type AgentPublication = {
-  readonly entries: Map<string, Readonly<{ tool: AgentTool; metadata: string; }>>;
+  readonly entries: Map<string, Readonly<{ tool: AgentTool; metadata: string; ready: Promise<boolean>; }>>;
   readonly catalog: HTMLScriptElement;
   readonly agent: WebMCPAgent;
   definitions: string;
@@ -77,6 +77,7 @@ type AgentPublication = {
 const publicationKey = Symbol.for("hypertea.webmcp.publication.v1");
 const observersKey = Symbol.for("hypertea.webmcp.observers.v1");
 const nativeModeKey = Symbol.for("hypertea.webmcp.native-mode.v1");
+const registrationFailedKey = Symbol.for("hypertea.webmcp.registration-failed.v1");
 
 /** `<meta name="hypertea-webmcp-native" content="full|restricted">` placed before any module script. */
 export const nativeRegistrationMetaName = "hypertea-webmcp-native";
@@ -90,6 +91,7 @@ declare const callerBrand: unique symbol;
 export type WebMCPCallerHandle = Readonly<{ [callerBrand]: true }>;
 type AgentDocument = Document & {
   [publicationKey]?: AgentPublication;
+  [registrationFailedKey]?: boolean;
   [observersKey]?: Set<WebMCPCallObserver>;
   [nativeModeKey]?: NativeRegistrationMode;
 };
@@ -143,8 +145,26 @@ function admitToolCall(page: Document, tool: WebMCPToolMetadata, caller?: WebMCP
 export function createWebMCPCaller(page: Document) {
   const handle = Object.freeze({}) as WebMCPCallerHandle;
   const lifetime = new AbortController();
-  return {
+  const caller = {
     handle,
+    captureReady: async (options?: Readonly<{signal: AbortSignal}>): Promise<WebMCPAgent> => {
+      const signal = AbortSignal.any(options === undefined ? [lifetime.signal] : [lifetime.signal, options.signal]);
+      if (signal.aborted || (page as AgentDocument)[registrationFailedKey] === true) throw new WebMCPInvocationError("cancelled-before-dispatch");
+      const publication = (page as AgentDocument)[publicationKey];
+      const entries = new Map(publication?.entries);
+      const ready = await new Promise<Array<boolean>>(resolve => {
+        const finish = (values: Array<boolean>) => { signal.removeEventListener("abort", aborted); resolve(values); };
+        const aborted = () => { finish([false]); };
+        signal.addEventListener("abort", aborted, {once: true});
+        void Promise.all([...entries.values()].map(entry => entry.ready)).then(finish);
+      });
+      if (lifetime.signal.aborted || (page as AgentDocument)[registrationFailedKey] === true || publication === undefined || (page as AgentDocument)[publicationKey] !== publication
+        || ready.some(value => !value) || publication.entries.size !== entries.size
+        || [...entries].some(([name, entry]) => publication.entries.get(name) !== entry)) {
+        throw new WebMCPInvocationError("cancelled-before-dispatch");
+      }
+      return caller.capture();
+    },
     capture: (): WebMCPAgent => {
       const publication = (page as AgentDocument)[publicationKey];
       const entries = new Map(publication?.entries);
@@ -167,6 +187,7 @@ export function createWebMCPCaller(page: Document) {
     },
     stop: () => { lifetime.abort(); },
   };
+  return caller;
 }
 
 function refreshAgentCatalog(publication: AgentPublication): void {
@@ -174,7 +195,7 @@ function refreshAgentCatalog(publication: AgentPublication): void {
   publication.catalog.textContent = `{"version":1,"global":"hyperteaAgent","tools":${publication.definitions}}`;
 }
 
-function exposeAgentTools(page: Document, tools: ReadonlyArray<AgentTool>): () => void {
+function exposeAgentTools(page: Document, tools: ReadonlyArray<AgentTool>, ready: Promise<boolean>): () => void {
   const host = page.defaultView ?? undefined;
   if (host === undefined) throw new Error("Agent exposure requires a browser window");
   const scope = page as AgentDocument;
@@ -186,7 +207,7 @@ function exposeAgentTools(page: Document, tools: ReadonlyArray<AgentTool>): () =
     if (names.has(tool.name)) throw new Error(`Duplicate tool: ${tool.name}`);
     names.add(tool.name);
     const { name, description, title, inputSchema, annotations } = tool;
-    return { tool, metadata: JSON.stringify({ name, description, title, inputSchema, annotations }) };
+    return { tool, metadata: JSON.stringify({ name, description, title, inputSchema, annotations }), ready };
   });
   if (publication === undefined) {
     if ("hyperteaAgent" in host || page.getElementById("hypertea-agent-tools") !== null) {
@@ -373,12 +394,15 @@ export function createWebMCP<Msg extends ProgramMsg>(options: Readonly<{
           if (subscribed) throw new Error("Create one WebMCP bridge per mounted program");
           subscribed = true;
           const registration = new AbortController();
+          let finishRegistration!: (ready: boolean) => void;
+          const ready = new Promise<boolean>(resolve => { finishRegistration = resolve; });
           let active = true;
           let removeAgent: (() => void) | undefined;
           const unsubscribe = () => {
             if (!active) return;
             active = false;
             subscribed = false;
+            finishRegistration(false);
             registration.abort();
             removeAgent?.();
           };
@@ -408,12 +432,14 @@ export function createWebMCP<Msg extends ProgramMsg>(options: Readonly<{
             };
           });
           void (async () => {
-            if (registered.length !== 0) removeAgent = exposeAgentTools(page, registered);
+            if (registered.length !== 0) removeAgent = exposeAgentTools(page, registered, ready);
             await Promise.all(registered.map(async (tool) => {
               await modelContext?.registerTool(tool, { signal: registration.signal });
             }));
+            finishRegistration(true);
           })().catch((error: unknown) => {
             if (!active) return;
+            (page as AgentDocument)[registrationFailedKey] = true;
             unsubscribe();
             dispatch(options.onRegistrationError(error));
           });

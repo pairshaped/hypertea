@@ -164,6 +164,7 @@ describe("native registration declaration", () => {
 afterEach(() => {
   for (const stop of stops.splice(0)) stop();
   vi.unstubAllGlobals();
+  Reflect.deleteProperty(document, Symbol.for("hypertea.webmcp.registration-failed.v1"));
   Reflect.deleteProperty(document, "modelContext");
   Reflect.deleteProperty(window, "hyperteaAgent");
   Reflect.deleteProperty(document, Symbol.for("hypertea.webmcp.native-mode.v1"));
@@ -916,4 +917,49 @@ test("caller lifetime and per-call signals distinguish cancellation before dispa
   await expect(agent.executeTool("save", { amount: 3 })).rejects.toMatchObject({ outcome: "cancelled-before-dispatch" });
   expect(saves).toHaveLength(1);
   required(saves[0]).dispatch({ ...required(saves[0]).effect, type: "saved", status: "applied" });
+});
+
+test("ready capture waits for native registration and refuses cancellation or a changed catalog", async () => {
+  const registrations: Array<() => void> = [];
+  installBrowser(() => new Promise<void>(resolve => { registrations.push(resolve); }));
+  const caller = createWebMCPCaller(document); stops.push(caller.stop);
+  await expect(caller.captureReady()).rejects.toMatchObject({outcome:"cancelled-before-dispatch"});
+  const feature = mountAsyncCounter();
+  let captured = false;
+  const ready = caller.captureReady().then(agent => { captured = true; return agent; });
+  await Promise.resolve();expect(captured).toBe(false);
+  for(const finish of registrations.splice(0))finish();
+  expect((await ready).getTools().map(tool=>tool.name)).toEqual(["save"]);
+  const beforeAddition = caller.captureReady();
+  mountAsyncCounter(["another"]);
+  await expect(beforeAddition).rejects.toMatchObject({outcome:"cancelled-before-dispatch"});
+  for(const finish of registrations.splice(0))finish();
+  feature.mounted.dispatch({type:"replaceTools"});
+  const signal = new AbortController();
+  const pending = caller.captureReady({signal:signal.signal});signal.abort();
+  await expect(pending).rejects.toMatchObject({outcome:"cancelled-before-dispatch"});
+  await expect(caller.captureReady({signal:signal.signal})).rejects.toMatchObject({outcome:"cancelled-before-dispatch"});
+  const stopping = caller.captureReady();caller.stop();
+  await expect(stopping).rejects.toMatchObject({outcome:"cancelled-before-dispatch"});
+  await expect(caller.captureReady()).rejects.toMatchObject({outcome:"cancelled-before-dispatch"});
+});
+
+test("ready capture fails when registration rejects or its owning mount disappears", async () => {
+  let rejectRegistration: (reason: Error) => void = () => { throw Error("No pending registration"); };
+  installBrowser(() => new Promise<void>((_resolve,reject) => {rejectRegistration=reject;}));
+  const caller=createWebMCPCaller(document);stops.push(caller.stop);
+  const feature=mountAsyncCounter();
+  const pending=caller.captureReady();
+  rejectRegistration(Error("Native registration failed"));
+  await expect(pending).rejects.toMatchObject({outcome:"cancelled-before-dispatch"});
+  feature.mounted.stop();
+  await expect(caller.captureReady()).rejects.toMatchObject({outcome:"cancelled-before-dispatch"});
+});
+
+test("ready capture refuses when its owning mount disappears during registration", async () => {
+  installBrowser(() => new Promise<void>(() => { /* Registration waits until the mount stops. */ }));
+  const caller=createWebMCPCaller(document);stops.push(caller.stop);
+  const other=mountAsyncCounter();
+  const detached=caller.captureReady();other.mounted.stop();
+  await expect(detached).rejects.toMatchObject({outcome:"cancelled-before-dispatch"});
 });

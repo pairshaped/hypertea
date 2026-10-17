@@ -428,6 +428,11 @@ simulated async actions.
 - [0008: WebMCP uses program calls and replies](docs/adr/0008-webmcp-program-integration.md)
 
 
+`createWebMCPCaller(document).captureReady()` waits for the current publication's
+native registrations before capturing its tools. It refuses if registration fails,
+the caller stops, or the catalog changes while waiting. Use it before automatically
+continuing work on a newly loaded page.
+
 ## Document page state
 
 Import `registerPageState`, `pageStateReader` and `decidePageConfirmation` from
@@ -448,6 +453,11 @@ uncertain writes can require protection without a dirty draft. A missing project
 or no live owners yields `type: "unavailable"`, which consumers must never treat as
 clean. Only known protection predicates warn; unavailable legacy pages retain their
 existing guard until their adapter migration.
+
+A page with a controlled leave dialog can publish `pendingNavigation`, the target
+URL awaiting its existing leave decision. Clear it when the person stays. The shell
+can cancel a staged continuation from this read-only signal; it never chooses a
+leave action or releases page work.
 
 Cards contain immutable plain-text summaries and ordered label/value strings.
 Their opaque handles belong to a live mount and pending cycle. Scope, token,

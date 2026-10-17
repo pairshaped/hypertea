@@ -144,3 +144,16 @@ test("every declared confirmation identity or material delta invalidates its old
   expect(decidePageConfirmation(document, last.handle, "confirm")).toBe(false);
   expect(a.decide).not.toHaveBeenCalled(); expect(replacement.decide).not.toHaveBeenCalled();
 });
+
+
+test("pending navigation is a read-only projection and clears when the page chooses Stay", () => {
+  const a = owner(), b = owner();
+  a.publish({...clean,pendingNavigation:"/website/sponsors"});
+  expect(pageStateReader(document)?.read()).toMatchObject({pendingNavigation:"/website/sponsors"});
+  b.publish({...clean,pendingNavigation:"/settings/tags"});
+  a.publish(clean);
+  expect(pageStateReader(document)?.read()).toMatchObject({pendingNavigation:"/settings/tags"});
+  b.publish(clean);
+  expect(pageStateReader(document)?.read()).not.toHaveProperty("pendingNavigation");
+  expect(a.decide).not.toHaveBeenCalled();expect(b.decide).not.toHaveBeenCalled();
+});

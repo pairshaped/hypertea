@@ -3,6 +3,7 @@ export type ConfirmationValues = ReadonlyArray<Readonly<{ label: string; value: 
 export type PageConfirmation = Readonly<{ token: string; revision: string; summary: string; values: ConfirmationValues }>;
 export type PageProjection = Readonly<{
   scope: string;
+  pendingNavigation?: string;
   hasUnsavedChanges: boolean;
   protectBeforeUnload: boolean;
   confirmations: ReadonlyArray<PageConfirmation>;
@@ -10,7 +11,7 @@ export type PageProjection = Readonly<{
 export type ConfirmationHandle = Readonly<object>;
 export type ConfirmationCard = Readonly<{ handle: ConfirmationHandle; summary: string; values: ConfirmationValues }>;
 export type PageDecision = PageConfirmation & Readonly<{ scope: string; decision: "confirm" | "cancel" }>;
-export type PageState = Readonly<{ protectBeforeUnload: boolean; confirmations: ReadonlyArray<ConfirmationCard> }> &
+export type PageState = Readonly<{ pendingNavigation?: string; protectBeforeUnload: boolean; confirmations: ReadonlyArray<ConfirmationCard> }> &
   (Readonly<{ type: "unavailable" }> | Readonly<{ type: "available"; hasUnsavedChanges: boolean }>);
 export type PageStateReader = Readonly<{ read: () => PageState; subscribe: (listener: () => void) => () => void }>;
 export type PageStateRegistration = Readonly<{ publish: (projection: PageProjection | undefined) => void; dispose: () => void }>;
@@ -85,7 +86,7 @@ export function registerPageState(page: Document, live: () => boolean, decide: (
           const values = Object.freeze(pending.values.map(value => Object.freeze({ ...value })));
           cards.set(handle, Object.freeze({ token: pending.token, revision: pending.revision, summary: pending.summary, values, scope: projection.scope, decision: "confirm" }));
         }
-        entry.projection = Object.freeze({ scope: projection.scope, hasUnsavedChanges: projection.hasUnsavedChanges, protectBeforeUnload: projection.protectBeforeUnload, confirmations: Object.freeze([...cards.values()]) });
+        entry.projection = Object.freeze({ scope: projection.scope, ...(projection.pendingNavigation === undefined ? {} : {pendingNavigation: projection.pendingNavigation}), hasUnsavedChanges: projection.hasUnsavedChanges, protectBeforeUnload: projection.protectBeforeUnload, confirmations: Object.freeze([...cards.values()]) });
       } else entry.projection = undefined;
       entry.cards = cards;
       notify(current);
@@ -101,10 +102,12 @@ export function registerPageState(page: Document, live: () => boolean, decide: (
 function read(entries: Set<Entry>): PageState {
   const live = [...entries].filter(entry => entry.live());
   const confirmations = Object.freeze(live.flatMap(entry => [...entry.cards].map(([handle, pending]) => Object.freeze({ handle, summary: pending.summary, values: pending.values }))));
+  const pendingNavigation = live.map(entry => entry.projection?.pendingNavigation).find(target => target !== undefined);
+  const navigation = pendingNavigation === undefined ? {} : {pendingNavigation};
   const protectBeforeUnload = live.some(entry => entry.projection?.protectBeforeUnload === true);
   return Object.freeze(live.length === 0 || live.some(entry => entry.projection === undefined)
-    ? { type: "unavailable", protectBeforeUnload, confirmations }
-    : { type: "available", protectBeforeUnload, confirmations, hasUnsavedChanges: live.some(entry => entry.projection?.hasUnsavedChanges === true) });
+    ? { type: "unavailable", ...navigation, protectBeforeUnload, confirmations }
+    : { type: "available", ...navigation, protectBeforeUnload, confirmations, hasUnsavedChanges: live.some(entry => entry.projection?.hasUnsavedChanges === true) });
 }
 
 function notify(registry: Registry): void {
