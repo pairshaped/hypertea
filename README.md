@@ -62,24 +62,6 @@ across reconnects within one mount and ignores callbacks from replaced sockets.
 Version 1 or malformed replies close the socket. A public document read may
 then recover through HTTP; a mutation must never be replayed automatically.
 
-The server may also push events on the same connection. An event frame carries
-exactly `version` (2), `kind` (`"event"`), `event` (a name like an operation
-name) and `payload`; it has no `requestId` or `status`. Register a handler after
-`connect` with `transport.on(event, parse, handler)`. It returns a function that
-removes the handler, or `undefined` when there is no active connection. The
-handler runs synchronously as each frame arrives and never counts as a reply.
-A reply's promise resolves at its own arrival, so once microtasks drain a caller
-sees events and replies in the order the frames arrived. Frames that arrive in
-one task (rare for a socket) run their handlers first and the awaiting
-continuations after. One handler per name; a second one
-replaces the first. A frame for a name with no handler is ignored. A payload
-that fails its parser, a frame with an unknown `kind`, an extra or missing
-field, a bad event name, or a frame over `maxFrameBytes` closes the socket and
-settles pending requests as `unknown`. Handlers end on removal, on the next
-`connect`, on `stop` and when the connection ends, and events from a replaced
-socket are ignored. Nothing is replayed: after a reconnect the caller registers
-its handlers again and re-reads whatever state events would have changed.
-
 ## Status
 
 The runtime exposes:

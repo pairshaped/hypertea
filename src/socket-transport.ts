@@ -8,13 +8,6 @@ export type SocketResult<Value> =
 export type SocketTransport = Readonly<{
   connect: (createSocket: () => WebSocket) => boolean;
   request: <Value>(operation: string, payload: unknown, parse: (value: unknown) => Value, signal?: AbortSignal) => Promise<SocketResult<Value>>;
-  /**
-   * Handle server-pushed events of one name on the current connection, or return `undefined` when
-   * there is no active connection. At most one handler per name; a second replaces the first. The
-   * handler ends when the returned function is called, on the next `connect`, on `stop` and when the
-   * connection ends. Nothing is replayed, so register after `connect` and again after a reconnect.
-   */
-  on: <Value>(event: string, parse: (value: unknown) => Value, handler: (value: Value) => void) => (() => void) | undefined;
   pendingCount: () => number;
   stop: () => void;
 }>;
@@ -36,7 +29,6 @@ export function createSocketTransport(options: Readonly<{ maxPending?: number; m
   let stopped = false;
   let removeListeners: (() => void) | undefined;
   const pending = new Map<number, Pending>();
-  const handlers = new Map<string, (payload: unknown) => void>();
   const bytes = (value: string) => new TextEncoder().encode(value).length;
 
   const failPending = (reason: Extract<SocketResult<unknown>, { status: "unknown" }>["reason"]) => {
@@ -45,7 +37,6 @@ export function createSocketTransport(options: Readonly<{ maxPending?: number; m
   const detach = (reason: Extract<SocketResult<unknown>, { status: "unknown" }>["reason"]) => {
     removeListeners?.();
     removeListeners = undefined;
-    handlers.clear();
     failPending(reason);
     const previous = socket;
     socket = undefined;
@@ -69,17 +60,6 @@ export function createSocketTransport(options: Readonly<{ maxPending?: number; m
         try { value = JSON.parse(event.data); } catch { detach("invalid-envelope"); return; }
         if (typeof value !== "object" || value === null || Array.isArray(value)) { detach("invalid-envelope"); return; }
         const reply = value as Record<string, unknown>;
-        if (Object.hasOwn(reply, "kind")) {
-          // Server-pushed event: version, kind, event and payload, and no reply fields.
-          if (reply.version !== 2 || reply.kind !== "event" || typeof reply.event !== "string"
-            || !/^[a-z][A-Za-z0-9]{0,63}$/.test(reply.event) || !Object.hasOwn(reply, "payload")
-            || Object.keys(reply).some((key) => !["version", "kind", "event", "payload"].includes(key))) {
-            detach("invalid-envelope");
-            return;
-          }
-          handlers.get(reply.event)?.(reply.payload);
-          return;
-        }
         if (reply.version !== 2 || !Number.isSafeInteger(reply.requestId) || (reply.requestId as number) < 1
           || (reply.status !== "ok" && reply.status !== "error")
           || (reply.status === "ok" && (!Object.hasOwn(reply, "payload") || Object.hasOwn(reply, "error")))
@@ -146,16 +126,6 @@ export function createSocketTransport(options: Readonly<{ maxPending?: number; m
         try { activeSocket.send(frame); }
         catch { finish({ status: "unknown", reason: "send-failed" }); }
       });
-    },
-    on: (event, parse, handler) => {
-      if (socket === undefined || !/^[a-z][A-Za-z0-9]{0,63}$/.test(event)) return undefined;
-      const listener = (payload: unknown) => {
-        let value: ReturnType<typeof parse>;
-        try { value = parse(payload); } catch { detach("invalid-response"); return; }
-        handler(value);
-      };
-      handlers.set(event, listener);
-      return () => { if (handlers.get(event) === listener) handlers.delete(event); };
     },
     pendingCount: () => pending.size,
     stop: () => {

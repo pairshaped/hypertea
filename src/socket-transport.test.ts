@@ -189,6 +189,7 @@ describe("socket operation transport", () => {
     const invalidReplies: Array<(request: { requestId: number }) => unknown> = [
       () => null,
       () => [],
+      () => ({ version: 2, kind: "event", event: "changed", payload: 2 }),
       (request) => ({ ...request, version: 1, status: "ok", payload: 2 }),
       (request) => ({ ...request, version: 2, generation: 1, status: "ok", payload: 2 }),
       (request) => ({ ...request, version: 2, requestId: 0, status: "ok", payload: 2 }),
@@ -241,128 +242,5 @@ describe("socket operation transport", () => {
     expect(parseAfterStop).not.toHaveBeenCalled();
     expect(transport.pendingCount()).toBe(0);
     transport.stop();
-  });
-});
-
-describe("server-pushed events", () => {
-  const event = (name: string, payload: unknown) => ({ version: 2, kind: "event", event: name, payload });
-
-  test("observes events and replies in arrival order and never takes an event for a reply", async () => {
-    const transport = createSocketTransport();
-    const socket = new FakeSocket();
-    transport.connect(() => socket.asWebSocket());
-    const seen: Array<string> = [];
-    transport.on("changed", parseNumber, (value) => { seen.push(`event ${String(value)}`); });
-    const first = transport.request("read", {}, parseNumber);
-    void first.then(() => { seen.push("reply 1"); });
-    const second = transport.request("read", {}, parseNumber);
-    void second.then(() => { seen.push("reply 2"); });
-    const a = sentRequest(socket, 0);
-    const b = sentRequest(socket, 1);
-    // A microtask turn between frames stands in for separate network messages.
-    socket.reply(event("changed", 1));
-    await Promise.resolve();
-    socket.reply({ version: 2, requestId: a.requestId, status: "ok", payload: 7 });
-    await Promise.resolve();
-    socket.reply(event("changed", 2));
-    await Promise.resolve();
-    socket.reply({ version: 2, requestId: b.requestId, status: "ok", payload: 8 });
-    await Promise.resolve();
-    socket.reply(event("changed", 3));
-    expect(seen).toEqual(["event 1", "reply 1", "event 2", "reply 2", "event 3"]);
-    expect(await first).toEqual({ status: "applied", value: 7 });
-    expect(await second).toEqual({ status: "applied", value: 8 });
-    expect(transport.pendingCount()).toBe(0);
-    transport.stop();
-  });
-
-  test("ignores an event nobody handles and rejects handlers without a live connection", () => {
-    const transport = createSocketTransport();
-    expect(transport.on("changed", parseNumber, vi.fn())).toBeUndefined();
-    const socket = new FakeSocket();
-    transport.connect(() => socket.asWebSocket());
-    expect(transport.on("Bad Name", parseNumber, vi.fn())).toBeUndefined();
-    socket.reply(event("other", 1));
-    expect(socket.closed).toBe(false);
-    transport.stop();
-    expect(transport.on("changed", parseNumber, vi.fn())).toBeUndefined();
-  });
-
-  test("a payload that fails its parser closes the socket and fails pending requests as unknown", async () => {
-    const transport = createSocketTransport();
-    const socket = new FakeSocket();
-    transport.connect(() => socket.asWebSocket());
-    const handler = vi.fn();
-    transport.on("changed", parseNumber, handler);
-    const pending = transport.request("write", {}, parseNumber);
-    socket.reply(event("changed", "not a number"));
-    expect(await pending).toEqual({ status: "unknown", reason: "invalid-response" });
-    expect(handler).not.toHaveBeenCalled();
-    expect(socket.closed).toBe(true);
-  });
-
-  test.each([
-    ["an unknown kind", { version: 2, kind: "notice", event: "changed", payload: 1 }],
-    ["a version 1 event", { version: 1, kind: "event", event: "changed", payload: 1 }],
-    ["a missing payload", { version: 2, kind: "event", event: "changed" }],
-    ["a bad event name", { version: 2, kind: "event", event: "Bad Name", payload: 1 }],
-    ["a non-string event", { version: 2, kind: "event", event: 7, payload: 1 }],
-    ["a reply field on an event", { version: 2, kind: "event", event: "changed", payload: 1, requestId: 1 }],
-  ])("%s closes the socket and fails pending requests as unknown", async (_name, frame) => {
-    const transport = createSocketTransport();
-    const socket = new FakeSocket();
-    transport.connect(() => socket.asWebSocket());
-    const handler = vi.fn();
-    transport.on("changed", parseNumber, handler);
-    const pending = transport.request("write", {}, parseNumber);
-    socket.reply(frame);
-    expect(await pending).toEqual({ status: "unknown", reason: "invalid-envelope" });
-    expect(handler).not.toHaveBeenCalled();
-    expect(socket.closed).toBe(true);
-  });
-
-  test("an oversize event frame closes the socket", async () => {
-    const transport = createSocketTransport({ maxFrameBytes: 256 });
-    const socket = new FakeSocket();
-    transport.connect(() => socket.asWebSocket());
-    const handler = vi.fn();
-    transport.on("changed", (value) => String(value), handler);
-    const pending = transport.request("write", {}, parseNumber);
-    socket.reply(event("changed", "x".repeat(300)));
-    expect(await pending).toEqual({ status: "unknown", reason: "invalid-envelope" });
-    expect(handler).not.toHaveBeenCalled();
-    expect(socket.closed).toBe(true);
-  });
-
-  test("a handler ends on removal, replacement, reconnect, stop and a closed socket, and a replaced socket's events are ignored", () => {
-    const transport = createSocketTransport();
-    const first = new FakeSocket();
-    transport.connect(() => first.asWebSocket());
-    const received: Array<string> = [];
-    const removeFirst = transport.on("changed", parseNumber, (value) => { received.push(`a${String(value)}`); });
-    const removeSecond = transport.on("changed", parseNumber, (value) => { received.push(`b${String(value)}`); });
-    first.reply(event("changed", 1));
-    removeFirst?.();
-    first.reply(event("changed", 2));
-    removeSecond?.();
-    first.reply(event("changed", 3));
-    expect(received).toEqual(["b1", "b2"]);
-
-    transport.on("changed", parseNumber, (value) => { received.push(`c${String(value)}`); });
-    const second = new FakeSocket();
-    transport.connect(() => second.asWebSocket());
-    first.reply(event("changed", 4));
-    second.reply(event("changed", 5));
-    expect(received).toEqual(["b1", "b2"]);
-
-    transport.on("changed", parseNumber, (value) => { received.push(`d${String(value)}`); });
-    second.close();
-    second.reply(event("changed", 6));
-    const third = new FakeSocket();
-    transport.connect(() => third.asWebSocket());
-    transport.on("changed", parseNumber, (value) => { received.push(`e${String(value)}`); });
-    transport.stop();
-    third.reply(event("changed", 7));
-    expect(received).toEqual(["b1", "b2"]);
   });
 });
