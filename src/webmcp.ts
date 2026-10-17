@@ -80,7 +80,7 @@ const nativeModeKey = Symbol.for("hypertea.webmcp.native-mode.v1");
 const registrationFailedKey = Symbol.for("hypertea.webmcp.registration-failed.v1");
 
 /** `<meta name="hypertea-webmcp-native" content="full|restricted">` placed before any module script. */
-export const nativeRegistrationMetaName = "hypertea-webmcp-native";
+const nativeRegistrationMetaName = "hypertea-webmcp-native";
 export type NativeRegistrationMode = "full" | "restricted";
 
 export type WebMCPCallObserver = Readonly<{

@@ -47,7 +47,9 @@ export function reply(result: JsonValue): Reply { return { type: replyKey, [repl
 function isReply(effect: unknown): effect is Reply {
   return typeof effect === "object" && effect !== null && replyKey in effect;
 }
+/** @public Part of the package boundary documented in README.md. */
 export type CallOptions = Readonly<{ origin?: EffectOrigin; signal?: AbortSignal; caller?: object }>;
+/** @public Part of the package boundary documented in README.md. */
 export class ProgramCallError extends Error {
   constructor(readonly outcome: "cancelled-before-dispatch" | "unknown") {
     super(outcome);
@@ -81,6 +83,7 @@ type ProgramSubscriptionTuple<Model, Msg extends ProgramMsg> = readonly [
   payload: ProgramSubscription<Msg>,
 ];
 
+/** @public Part of the package boundary documented in README.md. */
 export type ClassProp =
   | boolean
   | string
@@ -89,6 +92,7 @@ export type ClassProp =
   | Readonly<Record<string, boolean | undefined | null>>
   | ReadonlyArray<ClassProp>;
 
+/** @public Part of the package boundary documented in README.md. */
 export type StyleProp = Partial<
   Readonly<Record<keyof CSSStyleDeclaration, string | null | undefined>>
 > &
@@ -127,6 +131,7 @@ export type MaybeEffect<State, Payload = unknown> =
   | ""
   | 0;
 
+/** @public Part of the package boundary documented in README.md. */
 export type Dispatchable<State, Payload = unknown> =
   | State
   | readonly [state: State, ...effects: Array<MaybeEffect<State, Payload>>]
@@ -137,11 +142,13 @@ export type Subscriber<State, Payload = unknown> = {
   bivarianceHack(dispatch: Dispatch<State>, payload: Payload): Unsubscribe;
 }["bivarianceHack"];
 
+/** @public Part of the package boundary documented in README.md. */
 export type Subscription<State, Payload = unknown> = readonly [
   subscriber: Subscriber<State, Payload>,
   payload: Payload,
 ];
 
+/** @public Part of the package boundary documented in README.md. */
 export type MaybeSubscription<State, Payload = unknown> =
   | Subscription<State, Payload>
   | false
@@ -149,6 +156,7 @@ export type MaybeSubscription<State, Payload = unknown> =
   | null
   | undefined;
 
+/** @public Part of the package boundary documented in README.md. */
 export type Unsubscribe = () => void;
 
 export type Props = PropsRecord & {
@@ -201,6 +209,7 @@ export type TextVNode = {
 };
 
 export type VNode<State = unknown> = ElementVNode<State> | TextVNode;
+/** @public Part of the package boundary documented in README.md. */
 export type MaybeVNode<State = unknown> = VNode<State> | boolean | null | undefined;
 export type Child<State = unknown> =
   | MaybeVNode<State>
@@ -393,6 +402,7 @@ type EffectfulIslandMount<
     ) => void | Promise<void>;
   }>;
 
+/** @public Part of the package boundary documented in README.md. */
 export type IslandMount<
   Flags,
   Model,
@@ -541,14 +551,17 @@ export function clicked<Msg>(message: Msg): EventBinding<Msg> {
   return eventBinding(() => message);
 }
 
+/** @public Part of the package boundary documented in README.md. */
 export function dragEnded<Msg>(message: Msg): EventBinding<Msg> {
   return eventBinding(() => message);
 }
 
+/** @public Part of the package boundary documented in README.md. */
 export function dragEntered<Msg>(message: Msg): EventBinding<Msg> {
   return eventBinding(() => message);
 }
 
+/** @public Part of the package boundary documented in README.md. */
 export function dragStarted<Msg>(message: Msg): EventBinding<Msg> {
   return eventBinding(() => message);
 }

@@ -1,4 +1,5 @@
 /** Optional document-state effects. Importing the core Program runtime does not load this module. */
+/** @public Part of the package boundary documented in README.md. */
 export type ConfirmationValues = ReadonlyArray<Readonly<{ label: string; value: string }>>;
 export type PageConfirmation = Readonly<{ token: string; revision: string; summary: string; values: ConfirmationValues }>;
 export type PageProjection = Readonly<{
@@ -9,6 +10,7 @@ export type PageProjection = Readonly<{
   confirmations: ReadonlyArray<PageConfirmation>;
 }>;
 export type ConfirmationHandle = Readonly<object>;
+/** @public Part of the package boundary documented in README.md. */
 export type ConfirmationCard = Readonly<{ handle: ConfirmationHandle; summary: string; values: ConfirmationValues }>;
 export type PageDecision = PageConfirmation & Readonly<{ scope: string; decision: "confirm" | "cancel" }>;
 export type PageState = Readonly<{ pendingNavigation?: string; protectBeforeUnload: boolean; confirmations: ReadonlyArray<ConfirmationCard> }> &
