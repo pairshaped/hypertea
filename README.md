@@ -236,7 +236,23 @@ mountIslands({
 
 `update` returns `[model, effects]`. Effectless programs omit `runEffect`; declaring a real effect type makes the runner required. Invalid or missing flags render a visible mount error and produce a console diagnostic.
 
-`mountProgram()` and `start()` return a handle with `model()`, `dispatch()`, `call()`, `settle()`, and `stop()`. `settle()` flushes the currently queued DOM render without waiting for an animation frame. It does not wait for effects, timers, or network requests. `stop()` is idempotent and removes active subscriptions.
+`mountProgram()` and `start()` return a handle with `model()`, `dispatch()`, `call()`, `settle()`, and `stop()`. `settle()` flushes the currently queued DOM render without waiting for an animation frame. It does not wait for effects, timers, or network requests. `stop()` is idempotent, removes active subscriptions, blocks further dispatch and aborts pending runners' effect signals.
+
+Use `effectSignal(dispatch)` from `@pairshaped/hypertea/program` in an effect
+adapter to obtain its stop signal. Pass it to `fetch`, or listen for abort to
+clear a timer or release another resource. Return a promise covering the whole
+operation, including cleanup. A runner that returns `void` is complete when it
+returns; a settled promise is complete when the runtime observes its settlement.
+Completed runners' signals do not abort on later stop. A plain dispatch has no
+effect signal. Preserve the captured dispatch when forwarding effects between
+bundles.
+
+Cancellation is cooperative. An adapter that ignores the signal keeps its
+existing resource behavior, although its late dispatch is blocked. The effect
+signal belongs to one runner and aborts on Program stop. A caller's
+`effectInvocation(dispatch)?.signal` has a separate lifetime; combine the two
+signals when the operation must also stop on caller cancellation. This API does
+not add keyed replacement or retry a request.
 
 `update(model, message, origin)` receives the chain's `native` or `fallback`
 origin, or `undefined` for human and plain subscription messages. Direct callers

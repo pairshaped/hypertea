@@ -28,6 +28,11 @@ export type ProgramEffect = Readonly<{ type: string }>;
 export type EffectOrigin = "native" | "fallback";
 const effectOriginKey = Symbol.for("hypertea.effect.origin.v1");
 const effectInvocationKey = Symbol.for("hypertea.effect.invocation.v1");
+const effectSignalKey = Symbol.for("hypertea.effect.signal.v1");
+/** Cooperatively cancel this runner's pending work when its Program stops. */
+export function effectSignal(dispatch: object): AbortSignal | undefined {
+  return (dispatch as { readonly [effectSignalKey]?: AbortSignal })[effectSignalKey];
+}
 /** A single call's read-only identity and lifetime, shared by its effect chain. */
 export type EffectInvocation = Readonly<{
   caller?: object;
@@ -655,6 +660,7 @@ export function start<Model, Msg extends ProgramMsg, Effect extends ProgramEffec
   const [state, effects] = runtime.init();
 
   const callers = new Set<Caller>();
+  const pendingEffects = new Set<AbortController>();
   let stopped = false;
   let settleRender: () => Promise<void>;
   const settle = (): Promise<void> => settleRender();
@@ -688,18 +694,26 @@ export function start<Model, Msg extends ProgramMsg, Effect extends ProgramEffec
       (dispatch, payload) => {
         const runEffect = runtime.runEffect;
         if (runEffect === undefined) throw new Error("Effectless programs cannot produce effects");
-        const send = Object.assign((message: Msg) => { dispatch(messageAction(origin, caller), message); },
-          { [effectOriginKey]: origin, [effectInvocationKey]: caller?.invocation });
         if (caller?.invocation.signal.aborted === true) { finish(caller); return; }
-        if (caller === undefined) return runEffect(send, payload);
+        const lifetime = new AbortController();
+        if (stopped) lifetime.abort();
+        else pendingEffects.add(lifetime);
+        const send = Object.assign((message: Msg) => { dispatch(messageAction(origin, caller), message); },
+          { [effectOriginKey]: origin, [effectInvocationKey]: caller?.invocation, [effectSignalKey]: lifetime.signal });
         try {
-          return Promise.resolve(runEffect(send, payload)).then(
-            () => { finish(caller); },
-            () => { caller.reject(); finish(caller); },
+          const result = runEffect(send, payload);
+          if (result === undefined) pendingEffects.delete(lifetime);
+          if (caller === undefined) return result?.finally(() => { pendingEffects.delete(lifetime); });
+          return Promise.resolve(result).then(
+            () => { pendingEffects.delete(lifetime); finish(caller); },
+            () => { pendingEffects.delete(lifetime); caller.reject(); finish(caller); },
           );
-        } catch {
+        } catch (error) {
+          pendingEffects.delete(lifetime);
+          if (caller === undefined) throw error;
           caller.reject();
           finish(caller);
+          return;
         }
       },
       effect,
@@ -806,8 +820,10 @@ export function start<Model, Msg extends ProgramMsg, Effect extends ProgramEffec
     settle: controller.settle,
     stop: () => {
       stopped = true;
-      for (const caller of callers) caller.reject();
       controller.stop();
+      for (const caller of callers) caller.reject();
+      for (const lifetime of pendingEffects) lifetime.abort();
+      pendingEffects.clear();
     },
   };
 }

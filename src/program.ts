@@ -12,6 +12,7 @@ export {
   every,
   effectOrigin,
   effectInvocation,
+  effectSignal,
   type EffectInvocation,
   fragment,
   h,

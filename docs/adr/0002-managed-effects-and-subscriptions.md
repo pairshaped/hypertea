@@ -27,7 +27,47 @@ chain; a newer operation cannot answer it.
 subscription context. An already-aborted signal rejects with
 `cancelled-before-dispatch`; cancellation after dispatch, program stop, subscription
 withdrawal and a chain ending without a reply reject with `unknown`. Cancelling a
-call does not cancel its effects. Late replies are ignored.
+call retires its dispatch chain. Its invocation signal lets an adapter cooperate
+with caller cancellation; resource APIs otherwise keep running. Late replies are
+ignored.
+
+## Effect cancellation
+
+`effectSignal(dispatch)` exposes an AbortSignal for one pending `runEffect`.
+Program stop first blocks dispatch and removes subscriptions, then aborts pending
+effect signals. Repeated stop is harmless. A synchronous return or observed
+promise settlement releases that runner's controller without aborting it.
+Adapters return a promise through their final resource cleanup; detached work
+cannot be tracked. An unannotated dispatch has no effect signal.
+
+The signal is cooperative: pass it to fetch or use an abort listener to clear a
+timer. A promise alone cannot cancel work. Ignoring the signal preserves an
+adapter's behavior while the Program continues to suppress its late dispatch.
+Runner signatures and effect values stay unchanged. Dispatch metadata uses a
+versioned global symbol so separately bundled adapters can read the same signal.
+
+The caller invocation signal and effect stop signal have different lifetimes.
+A reply retires the caller without stopping sibling effects, and an adapter can
+combine both signals when caller cancellation should also cancel its resources.
+Cancellation does not establish whether a server committed a write.
+
+The Curling adapter inventory includes 50 effect modules using `createEffectScope`,
+which cleans up on pagehide, disconnected roots and optional caller cancellation.
+A connected Program's stop needs its own signal: its root can remain connected
+after subscriptions stop. Public Notice deliberately combines the effect and
+caller signals at this scope boundary. Other adapters retain their behavior.
+Managed-host stylesheet loading separately owns its observer/pagehide cleanup;
+dynamic imports cannot be cancelled. Public website effects own fetches and a
+bounded stylesheet timer. Socket transport owns explicit stop and cancellation.
+Product Info owns a controller set for mount lifetime. Report Table cancels its
+earlier read locally before starting another. There is no demonstrated need for
+keyed replacement in Hypertea.
+
+A per-effect signal fits those browser APIs and releases completed work without
+requiring each adapter to unregister from a shared Program signal. Cleanup
+callbacks would change the runner return contract or require another registration
+API. A ProgramContext-only signal would omit lower-level `start` runners. The
+chosen contract adds one controller per pending runner and no scheduling runtime.
 
 Subscriptions are declared from model state as `ProgramSubscription<Msg>` values.
 The runtime preserves or replaces instances as state changes. Calls belong to the
