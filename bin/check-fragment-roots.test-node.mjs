@@ -1,12 +1,15 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import ts from "typescript";
+import { URL, fileURLToPath } from "node:url";
+const runtimeDeclarations = fileURLToPath(new URL("../dist/index.d.ts", import.meta.url));
 import { checkFragmentRoots } from "./check-fragment-roots.mjs";
 
 function check(source) {
   const options = { jsx: ts.JsxEmit.React, jsxFactory: "h", jsxFragmentFactory: "fragment", noLib: true };
   const files = {
     "/fixture.tsx": source,
+    [runtimeDeclarations]: "export declare function memo(view: () => unknown, data: unknown): { tag: unknown };",
     "/helper.tsx": 'export const result = () => <>helper</>;',
   };
   const host = ts.createCompilerHost(options);
@@ -51,4 +54,12 @@ test("a fragment used only as a condition cannot become the root", () => {
 
 test("a child helper named view remains valid outside a Program", () => {
   assert.deepEqual(check('const child = { view: () => <>child</> }; const program = { init: () => undefined, view: () => <main>{child.view()}</main> };'), []);
+});
+
+test("memoized views also require one root VNode", () => {
+  const errors = check(`import { memo } from ${JSON.stringify(runtimeDeclarations)};
+    const child = () => <>invalid</>;
+    const program = { init: () => undefined, view: () => <main>{memo(child, {})}</main> };`);
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /one root VNode/);
 });

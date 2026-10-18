@@ -2,11 +2,12 @@
 import ts from "typescript";
 import process from "node:process";
 import { resolve, dirname } from "node:path";
-import { pathToFileURL } from "node:url";
+import { URL, fileURLToPath, pathToFileURL } from "node:url";
 
 /** Follow view results, not element children: fragments are only valid in children. */
 export function checkFragmentRoots(program) {
   const checker = program.getTypeChecker();
+  const runtimeModules = new Set(["../src/index.ts", "../dist/index.d.ts"].map(path => fileURLToPath(new URL(path, import.meta.url))));
   const errors = [];
   const reported = new Set();
   function inspect(node, seen, bindings = new Map()) {
@@ -56,6 +57,11 @@ export function checkFragmentRoots(program) {
   for (const source of program.getSourceFiles()) {
     if (source.isDeclarationFile || /[/\\]node_modules[/\\]/.test(source.fileName)) continue;
     function visit(node) {
+      if (ts.isCallExpression(node)) {
+        const declaration = checker.getResolvedSignature(node)?.declaration;
+        if (declaration && ts.isFunctionDeclaration(declaration) && declaration.name?.text === "memo"
+          && runtimeModules.has(resolve(declaration.getSourceFile().fileName))) inspect(node.arguments[0], new Set());
+      }
       if ((ts.isPropertyAssignment(node) || ts.isShorthandPropertyAssignment(node) || ts.isMethodDeclaration(node)) && (ts.isIdentifier(node.name) || ts.isStringLiteral(node.name)) && node.name.text === "view"
         && ts.isObjectLiteralExpression(node.parent) && checker.getTypeAtLocation(node.parent).getProperty("init")) {
         inspect(ts.isPropertyAssignment(node) ? node.initializer : node, new Set());

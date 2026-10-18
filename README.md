@@ -95,10 +95,11 @@ inserted, updated and removed. Helpers may return fragments for use as children.
 
 Each Program view must return one root VNode. Wrap a root fragment in an element.
 Direct fragment-array returns fail TypeScript. JSX shorthand needs the additional
-build check because TypeScript types every JSX expression as `JSX.Element`:
+build check because TypeScript types every JSX expression as `JSX.Element`.
+Run this from the Hypertea package directory:
 
 ```sh
-node packages/hypertea/bin/check-fragment-roots.mjs path/to/tsconfig.json
+node bin/check-fragment-roots.mjs path/to/tsconfig.json
 ```
 
 Curling's island build runs this check before writing bundles, including lazy
