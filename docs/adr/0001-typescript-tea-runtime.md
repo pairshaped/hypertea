@@ -34,7 +34,7 @@ Fragments are supported as children. `h(fragment, ...)` and `fragment(...)`
 flatten their children into inline VNodes, including nested and conditional
 fragments. Child helpers can return those lists without adding wrapper elements.
 
-A Program view returns one root VNode. A fragment cannot be that root. Direct
+A Program or memoized view returns one root VNode. A fragment cannot be that root. Direct
 fragment-array returns are rejected by TypeScript; JSX shorthand requires the
 package's build-time fragment-root check because its TypeScript type is
 `JSX.Element`. Curling runs that check before bundling its islands. It follows

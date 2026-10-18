@@ -93,7 +93,7 @@ Fragments (`<>...</>`, `h(fragment, ...)` or `fragment(...)`) group children
 without adding a DOM element. Child fragments may be nested, conditionally
 inserted, updated and removed. Helpers may return fragments for use as children.
 
-Each Program view must return one root VNode. Wrap a root fragment in an element.
+Each Program or memoized view must return one root VNode. Wrap a root fragment in an element.
 Direct fragment-array returns fail TypeScript. JSX shorthand needs the additional
 build check because TypeScript types every JSX expression as `JSX.Element`.
 Run this from the Hypertea package directory:
