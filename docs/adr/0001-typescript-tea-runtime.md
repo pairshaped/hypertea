@@ -28,6 +28,24 @@ The runtime owns the DOM mechanics. It may use browser APIs internally to create
 
 The lower-level `app` API exists for the runtime and benchmarks. Application islands should define one `Program` and mount it with `mountProgram` or `mountIslands`.
 
+## Fragments and composition
+
+Fragments are supported as children. `h(fragment, ...)` and `fragment(...)`
+flatten their children into inline VNodes, including nested and conditional
+fragments. Child helpers can return those lists without adding wrapper elements.
+
+A Program view returns one root VNode. A fragment cannot be that root. Direct
+fragment-array returns are rejected by TypeScript; JSX shorthand requires the
+package's build-time fragment-root check because its TypeScript type is
+`JSX.Element`. Curling runs that check before bundling its islands. It follows
+returned view expressions through helpers, stops at element roots, and reports
+a source location for a rejected fragment root. Wrap the root in an element.
+
+A single view root does not require a single Program for the page. Independently
+mounted Programs, including nested Results embeds, retain their own root and
+lifecycle. Parent-owned model composition with mapped child messages and effects
+is also supported. The host chooses composition at its existing boundary.
+
 ## Design Constraints
 
 - Keep the runtime small enough to understand in one sitting.

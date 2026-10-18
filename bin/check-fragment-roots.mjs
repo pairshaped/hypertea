@@ -56,7 +56,8 @@ export function checkFragmentRoots(program) {
   for (const source of program.getSourceFiles()) {
     if (source.isDeclarationFile || /[/\\]node_modules[/\\]/.test(source.fileName)) continue;
     function visit(node) {
-      if ((ts.isPropertyAssignment(node) || ts.isShorthandPropertyAssignment(node) || ts.isMethodDeclaration(node)) && (ts.isIdentifier(node.name) || ts.isStringLiteral(node.name)) && node.name.text === "view") {
+      if ((ts.isPropertyAssignment(node) || ts.isShorthandPropertyAssignment(node) || ts.isMethodDeclaration(node)) && (ts.isIdentifier(node.name) || ts.isStringLiteral(node.name)) && node.name.text === "view"
+        && ts.isObjectLiteralExpression(node.parent) && checker.getTypeAtLocation(node.parent).getProperty("init")) {
         inspect(ts.isPropertyAssignment(node) ? node.initializer : node, new Set());
       }
       ts.forEachChild(node, visit);

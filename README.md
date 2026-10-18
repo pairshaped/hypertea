@@ -70,7 +70,7 @@ The runtime exposes:
 - `mountProgram()` for mounting a program into a caller-provided element
 - `mountIslands()` for scanning server-rendered mounts, parsing flags, and mounting canonical programs
 - `start()` for lower-level hosts that already construct a runtime
-- `h()` and `fragment()` for TSX-friendly element VNodes
+- `h()` for element VNodes and `fragment()` for inline child lists
 - package-provided JSX types for TSX islands
 - `text()` for text VNodes
 - `memo()` for memoized view islands
@@ -86,6 +86,29 @@ The package also includes:
 - Vitest with 100 percent coverage thresholds
 - ADRs describing the intended design
 - helpers for exhaustive matching and empty effects
+
+## Fragments and view roots
+
+Fragments (`<>...</>`, `h(fragment, ...)` or `fragment(...)`) group children
+without adding a DOM element. Child fragments may be nested, conditionally
+inserted, updated and removed. Helpers may return fragments for use as children.
+
+Each Program view must return one root VNode. Wrap a root fragment in an element.
+Direct fragment-array returns fail TypeScript. JSX shorthand needs the additional
+build check because TypeScript types every JSX expression as `JSX.Element`:
+
+```sh
+node packages/hypertea/bin/check-fragment-roots.mjs path/to/tsconfig.json
+```
+
+Curling's island build runs this check before writing bundles, including lazy
+feature sources. It follows view results through helpers and rejects fragment
+roots with a source location. Fragments beneath an element root remain valid.
+
+This rule concerns rendered nodes. It supports both independently mounted
+Programs, including nested Results embeds, and parent-owned models with mapped
+child messages and effects. Each independently mounted Program owns its own
+root and lifetime.
 
 ## Elm-Like Guardrails
 
