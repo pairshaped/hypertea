@@ -51,7 +51,7 @@
     "preinstall": "node -e 'const agent=process.env.npm_config_user_agent??\"\";if(!agent.startsWith(\"pnpm/\")){console.error(\"error: use pnpm for this repository\");process.exit(1)}'",
     "bench": "pnpm run build && node benchmark/dom-patching.mjs",
     "build": "tsc -p tsconfig.build.json",
-    "check": "pnpm run typecheck && pnpm run lint && pnpm run test:coverage && pnpm run build && pnpm run check:webmcp-example",
+    "check": "pnpm run typecheck && pnpm run lint && pnpm run test:coverage && pnpm run build && pnpm run check:webmcp-example && pnpm run test:fragment-roots",
     "lint": "eslint .",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
@@ -59,7 +59,8 @@
     "test:webmcp:fallback": "pnpm run build && pnpm run check:webmcp-example && node bin/test-webmcp.mjs --fallback",
     "typecheck": "tsc --noEmit",
     "generate:webmcp-example": "node bin/generate-webmcp.mjs --project test/tsconfig.webmcp.json --source test/webmcp-tools.ts --output test/webmcp.generated.ts",
-    "check:webmcp-example": "node bin/generate-webmcp.mjs --project test/tsconfig.webmcp.json --source test/webmcp-tools.ts --output test/webmcp.generated.ts --check && tsc -p test/tsconfig.webmcp.json"
+    "check:webmcp-example": "node bin/generate-webmcp.mjs --project test/tsconfig.webmcp.json --source test/webmcp-tools.ts --output test/webmcp.generated.ts --check && tsc -p test/tsconfig.webmcp.json",
+    "test:fragment-roots": "node --test bin/check-fragment-roots.test-node.mjs"
   },
   "keywords": [
     "tea",
