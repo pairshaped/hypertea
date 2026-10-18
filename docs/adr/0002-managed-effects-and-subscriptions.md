@@ -31,6 +31,16 @@ call retires its dispatch chain. Its invocation signal lets an adapter cooperate
 with caller cancellation; resource APIs otherwise keep running. Late replies are
 ignored.
 
+Subscriptions are declared from model state as `ProgramSubscription<Msg>` values.
+The runtime preserves or replaces instances as state changes. Calls belong to the
+issuing instance, so replacing it rejects its pending calls.
+
+`ProgramContext.settle()` and the handle's `settle()` flush queued rendering without
+waiting for an animation frame. They do not wait for network requests or effects.
+Hidden tabs therefore retain the same reply and DOM ordering as visible tabs.
+
+Ordinary application code can request effects from `update`, but it should not execute unmanaged browser or network side effects directly. Subscriptions use the same boundary: a subscription can listen to a browser or external event, but the behavior is declared through Hypertea and dispatches typed messages.
+
 ## Effect cancellation
 
 `effectSignal(dispatch)` exposes an AbortSignal for one pending `runEffect`.
@@ -69,15 +79,32 @@ callbacks would change the runner return contract or require another registratio
 API. A ProgramContext-only signal would omit lower-level `start` runners. The
 chosen contract adds one controller per pending runner and no scheduling runtime.
 
-Subscriptions are declared from model state as `ProgramSubscription<Msg>` values.
-The runtime preserves or replaces instances as state changes. Calls belong to the
-issuing instance, so replacing it rejects its pending calls.
+## Retry policy
 
-`ProgramContext.settle()` and the handle's `settle()` flush queued rendering without
-waiting for an animation frame. They do not wait for network requests or effects.
-Hidden tabs therefore retain the same reply and DOM ordering as visible tabs.
+Hypertea has no declarative retry value or retry interpreter. The current adapter
+inventory does not establish two workflows needing the same safe retry policy.
+Applications keep their explicit recovery behavior.
 
-Ordinary application code can request effects from `update`, but it should not execute unmanaged browser or network side effects directly. Subscriptions use the same boundary: a subscription can listen to a browser or external event, but the behavior is declared through Hypertea and dispatches typed messages.
+| Boundary | Operation and current behavior | Retry classification |
+| --- | --- | --- |
+| Curling `readJson` | One no-store GET with manual redirects; returns status or failure | A fresh observational read can be safe, but no shared retry requirement is established |
+| Curling `writeJson` | One POST; transport or parse uncertainty returns `unknown` | Unsafe to replay without a specific server idempotency guarantee |
+| `agentFetch` | Adds provenance headers and performs one fetch | Supplies no retry or idempotency guarantee |
+| Public website effects | Route/results reads, explicit recovery reads and POST commands; guards route/session context | Preserve the owning workflow's recovery; never infer mutation replay safety from request correlation |
+| Socket transport | Sends each frame once; disconnect or cancellation after send returns `unknown` | Request ids correlate replies, they do not prove server deduplication |
+| Webhook redelivery and installment retry actions | Explicit domain commands initiated by the user | Excluded from automatic transport retry; no replay guarantee established by this investigation |
+
+HTTP method alone does not establish the server's contract. Authentication and
+redirect responses need the owning feature's navigation policy; validation and
+conflict responses need a domain decision. A 429 or 5xx response is not by itself
+permission to replay a write. No server idempotency guarantee for such replay is
+assumed here.
+
+Cancellation and pagehide terminate an adopted adapter's current scope. Neither
+visibility changes nor reconnecting schedule another attempt. Any future retry
+proposal needs named consumers, retryable failures, bounded attempts and delay,
+and cancellation of scheduled work at the narrowest owning boundary. There is no
+current need to choose backoff, jitter or an interpreter API.
 
 ## Effect Boundary
 

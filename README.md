@@ -254,6 +254,14 @@ signal belongs to one runner and aborts on Program stop. A caller's
 signals when the operation must also stop on caller cancellation. This API does
 not add keyed replacement or retry a request.
 
+Hypertea has no shared retry policy. The Curling adapter inventory found no two
+workflows requiring the same safe retry semantics. Reads retain their explicit
+recovery paths; writes with an unknown outcome must not be replayed without a
+server idempotency guarantee. Socket request ids provide correlation, not that
+guarantee. Cancellation, page visibility changes and reconnects do not schedule
+new attempts. See [managed effects and subscriptions](docs/adr/0002-managed-effects-and-subscriptions.md)
+for the inventory and decision.
+
 `update(model, message, origin)` receives the chain's `native` or `fallback`
 origin, or `undefined` for human and plain subscription messages. Direct callers
 must pass that third argument. Origin is provenance, not authorization.
