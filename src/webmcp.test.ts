@@ -890,7 +890,7 @@ test("captured caller catalog refuses missing, replaced and detached tools befor
   await expect(empty.executeTool("missing", {})).rejects.toMatchObject({ outcome: "cancelled-before-dispatch" });
   const first = mountAsyncCounter();
   const captured = caller.capture();
-  await expect(captured.executeTool("missing", {})).rejects.toMatchObject({ outcome: "cancelled-before-dispatch" });
+  await expect(captured.executeTool("missing", {})).rejects.toMatchObject({ outcome: "cancelled-before-dispatch", reason: "unknown-tool" });
   first.mounted.stop();
   const second = mountAsyncCounter();
   await expect(captured.executeTool("save", { amount: 1 })).rejects.toMatchObject({ outcome: "cancelled-before-dispatch" });
