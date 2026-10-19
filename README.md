@@ -364,6 +364,14 @@ and construct messages. There are no repeated tool names, payload definitions,
 parsers or dispatch mappings. Keep `Msg` organized around application behavior.
 Only allowlisted messages are exposed.
 
+Input parsing or message mapping failures reject with `WebMCPInvocationError`
+whose `outcome` is `"cancelled-before-dispatch"` and `reason` is `"invalid-input"`.
+These failures happen before call observers and the Program run. The error uses
+a fixed message and does not expose the rejected input or parser exception.
+Errors after dispatch keep the existing cancellation or `"unknown"` outcome;
+unknown errors never carry an invalid-input reason. A known refusal can be
+reported through the caller's normal result protocol without replaying work.
+
 Run `hypertea-webmcp --project tsconfig.json --source webmcp.ts --output
 webmcp.generated.ts` after changing a selected message. Add the same command with
 `--check` to your build or CI to reject stale schemas. Generation requires

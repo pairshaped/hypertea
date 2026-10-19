@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { clicked, defineProgram, effectOrigin, effectInvocation, h, mountProgram, reply } from "./program.js";
 import {
+  WebMCPInvocationError,
   createWebMCP,
   createWebMCPCaller,
   defineWebMCPTool,
@@ -263,7 +264,7 @@ describe("WebMCP program integration", () => {
     expect(await required(native.get("save")).execute({ amount: 5 })).toEqual(refusal);
     expect(saves).toEqual([]);
     expect(start).not.toHaveBeenCalled();
-    await expect(agent.executeTool("save", {})).rejects.toThrow("finite amount");
+    await expect(agent.executeTool("save", {})).rejects.toMatchObject({outcome: "cancelled-before-dispatch", reason: "invalid-input"});
     stop();
     stops.push(observeWebMCPCalls(document, { beforeDispatch: () => undefined }));
     stops.push(observeWebMCPCalls(document, { onStart: start }));
@@ -597,7 +598,7 @@ describe("WebMCP program integration", () => {
     const { mounted, saves } = mountAsyncCounter();
     const execute = tools === undefined ? required(window.hyperteaAgent).executeTool.bind(undefined, "save") : required(tools.get("save")).execute;
     const signal = new AbortController().signal;
-    await expect(execute({ amount: "bad" }, { signal })).rejects.toThrow("Expected a finite amount");
+    await expect(execute({ amount: "bad" }, { signal })).rejects.toMatchObject({outcome: "cancelled-before-dispatch", reason: "invalid-input"});
     await expect(execute({ amount: -1 }, { signal })).rejects.toMatchObject({ outcome: "unknown" });
     await expect(execute({ amount: 13 }, { signal })).rejects.toMatchObject({ outcome: "unknown" });
     expect(saves).toEqual([]);
@@ -962,4 +963,42 @@ test("ready capture refuses when its owning mount disappears during registration
   const other=mountAsyncCounter();
   const detached=caller.captureReady();other.mounted.stop();
   await expect(detached).rejects.toMatchObject({outcome:"cancelled-before-dispatch"});
+});
+
+
+test.each(["native", "fallback", "builtin"] as const)("%s refuses pure mapping failures before admission or dispatch", async origin => {
+  const native = installBrowser();
+  type Msg = {type: "read" | "failed"};
+  const bridge = createWebMCP<Msg>({onRegistrationError: () => ({type: "failed"})});
+  const secret = "private-input-must-not-escape";
+  const declaration = defineWebMCPTool({name: "read", description: "Read", inputSchema: {type: "object"},
+    parseInput: () => {throw new Error(secret);}, toMessage: (): Msg => ({type: "read"})});
+  const call = vi.fn(() => Promise.resolve("unexpected"));
+  stops.push(bridge.subscription([declaration]).subscribe(() => undefined, {call}));
+  const admission = vi.fn();
+  stops.push(observeWebMCPCalls(document, {onStart: admission, beforeDispatch: admission}));
+  const caller = createWebMCPCaller(document); stops.push(caller.stop);
+  const pending = origin === "native" ? required(native.get("read")).execute({secret})
+    : origin === "fallback" ? required(window.hyperteaAgent).executeTool("read", {secret})
+    : caller.capture().executeTool("read", {secret});
+  await expect(pending).rejects.toMatchObject({name: "WebMCPInvocationError", outcome: "cancelled-before-dispatch", reason: "invalid-input", message: "Invalid input for WebMCP tool"});
+  expect(call).not.toHaveBeenCalled();
+  expect(admission).not.toHaveBeenCalled();
+});
+
+test("unknown always discards a supplied invalid-input reason", () => {
+  expect(new WebMCPInvocationError("unknown", "invalid-input")).toMatchObject({outcome: "unknown", reason: undefined});
+  expect(new WebMCPInvocationError("cancelled-before-dispatch")).toMatchObject({reason: undefined});
+});
+
+test("a dispatched error cannot retain an invalid-input reason", async () => {
+  const native = installBrowser();
+  type Msg = {type: "read"};
+  const bridge = createWebMCP<Msg>({onRegistrationError: () => ({type: "read"})});
+  const declaration = defineWebMCPTool({name: "read", description: "Read", inputSchema: {type: "object"},
+    parseInput: () => undefined, toMessage: (): Msg => ({type: "read"})});
+  stops.push(bridge.subscription([declaration]).subscribe(() => undefined, {
+    call: () => Promise.reject(new WebMCPInvocationError("unknown", "invalid-input")),
+  }));
+  await expect(required(native.get("read")).execute({})).rejects.toMatchObject({outcome: "unknown", reason: undefined});
 });

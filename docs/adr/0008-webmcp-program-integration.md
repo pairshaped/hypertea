@@ -26,6 +26,14 @@ root discriminator. Selected messages need no completion metadata. It does not
 infer business rules or outcomes. The manual `defineWebMCPTool` adapter is available
 when a different tool contract or unsupported payload type needs explicit parsing.
 
+Pure input parsing and message mapping run before observer admission and the
+Program call. A failure rejects with `WebMCPInvocationError`, outcome
+`cancelled-before-dispatch` and the constrained reason `invalid-input`. The
+message is fixed; parser exceptions and rejected data are not projected to the
+caller. The adapter catches only this mapping boundary. Errors after the Program
+call retain cancellation or unknown semantics and do not carry this reason.
+A caller can record the known refusal through its normal result protocol.
+
 Removing a subscription or replacing its tools array rejects pending calls with
 `unknown`. An already-aborted signal rejects with `cancelled-before-dispatch`.
 Cancellation after dispatch retires the invocation and suppresses late message

@@ -10,10 +10,13 @@ export type WebMCPValue =
   | Readonly<{ [key: string]: WebMCPValue; }>;
 
 export class WebMCPInvocationError extends Error {
-  constructor(readonly outcome: "cancelled-before-dispatch" | "unknown") {
+  readonly reason: "invalid-input" | undefined;
+
+  constructor(readonly outcome: "cancelled-before-dispatch" | "unknown", reason?: "invalid-input") {
     super(outcome === "unknown"
       ? "WebMCP stopped waiting after dispatch; the application outcome is unknown"
-      : "WebMCP invocation cancelled before dispatch");
+      : reason === "invalid-input" ? "Invalid input for WebMCP tool" : "WebMCP invocation cancelled before dispatch");
+    this.reason = outcome === "cancelled-before-dispatch" ? reason : undefined;
     this.name = "WebMCPInvocationError";
   }
 }
@@ -414,7 +417,12 @@ export function createWebMCP<Msg extends ProgramMsg>(options: Readonly<{
                 const signal = execution?.signal;
                 const cancelled = () => !active || signal?.aborted === true;
                 if (cancelled()) throw new WebMCPInvocationError("cancelled-before-dispatch");
-                const message = toMessage(input);
+                let message: Msg;
+                try {
+                  message = toMessage(input);
+                } catch {
+                  throw new WebMCPInvocationError("cancelled-before-dispatch", "invalid-input");
+                }
                 const refusal = admitToolCall(page, metadata, caller);
                 if (refusal !== undefined) return refusal;
                 if (cancelled()) throw new WebMCPInvocationError("cancelled-before-dispatch");
