@@ -887,23 +887,25 @@ test("scoped callers identify only their own invocation without changing tool or
 test("captured caller catalog refuses missing, replaced and detached tools before dispatch", async () => {
   const caller = createWebMCPCaller(document); stops.push(caller.stop);
   const empty = caller.capture(); expect(empty.getTools()).toEqual([]);
-  await expect(empty.executeTool("missing", {})).rejects.toMatchObject({ outcome: "cancelled-before-dispatch" });
+  await expect(empty.executeTool("missing", {})).rejects.toMatchObject({ outcome: "cancelled-before-dispatch", reason: undefined });
   const first = mountAsyncCounter();
   const captured = caller.capture();
   await expect(captured.executeTool("missing", {})).rejects.toMatchObject({ outcome: "cancelled-before-dispatch", reason: "unknown-tool" });
+  expect(first.saves).toHaveLength(0);
   first.mounted.stop();
+  await expect(captured.executeTool("missing", {})).rejects.toMatchObject({outcome: "cancelled-before-dispatch", reason: undefined});
   const second = mountAsyncCounter();
-  await expect(captured.executeTool("save", { amount: 1 })).rejects.toMatchObject({ outcome: "cancelled-before-dispatch" });
+  await expect(captured.executeTool("save", { amount: 1 })).rejects.toMatchObject({ outcome: "cancelled-before-dispatch", reason: undefined });
   expect(second.saves).toHaveLength(0);
   const fresh = caller.capture(); second.mounted.dispatch({ type: "replaceTools" });
-  await expect(fresh.executeTool("save", { amount: 1 })).rejects.toMatchObject({ outcome: "cancelled-before-dispatch" });
+  await expect(fresh.executeTool("save", { amount: 1 })).rejects.toMatchObject({ outcome: "cancelled-before-dispatch", reason: undefined });
   const beforeAddition = caller.capture();
   const added = mountAsyncCounter(["another"]);
-  await expect(beforeAddition.executeTool("save_alternate", { amount: 1 })).rejects.toMatchObject({ outcome: "cancelled-before-dispatch" });
+  await expect(beforeAddition.executeTool("save_alternate", { amount: 1 })).rejects.toMatchObject({ outcome: "cancelled-before-dispatch", reason: undefined });
   expect(second.saves).toHaveLength(0);
   const beforeReplacement = caller.capture();
   added.mounted.dispatch({ type: "replaceTools" });
-  await expect(beforeReplacement.executeTool("save_alternate", { amount: 1 })).rejects.toMatchObject({ outcome: "cancelled-before-dispatch" });
+  await expect(beforeReplacement.executeTool("save_alternate", { amount: 1 })).rejects.toMatchObject({ outcome: "cancelled-before-dispatch", reason: undefined });
 });
 
 test("caller lifetime and per-call signals distinguish cancellation before dispatch from unknown after dispatch", async () => {
@@ -986,19 +988,42 @@ test.each(["native", "fallback", "builtin"] as const)("%s refuses pure mapping f
   expect(admission).not.toHaveBeenCalled();
 });
 
-test("unknown always discards a supplied invalid-input reason", () => {
-  expect(new WebMCPInvocationError("unknown", "invalid-input")).toMatchObject({outcome: "unknown", reason: undefined});
+test.each(["invalid-input", "unknown-tool"] as const)("unknown always discards a supplied %s reason", reason => {
+  expect(new WebMCPInvocationError("unknown", reason)).toMatchObject({outcome: "unknown", reason: undefined});
   expect(new WebMCPInvocationError("cancelled-before-dispatch")).toMatchObject({reason: undefined});
 });
 
-test("a dispatched error cannot retain an invalid-input reason", async () => {
+test.each(["invalid-input", "unknown-tool"] as const)("a dispatched error cannot retain a %s reason", async reason => {
   const native = installBrowser();
   type Msg = {type: "read"};
   const bridge = createWebMCP<Msg>({onRegistrationError: () => ({type: "read"})});
   const declaration = defineWebMCPTool({name: "read", description: "Read", inputSchema: {type: "object"},
     parseInput: () => undefined, toMessage: (): Msg => ({type: "read"})});
   stops.push(bridge.subscription([declaration]).subscribe(() => undefined, {
-    call: () => Promise.reject(new WebMCPInvocationError("unknown", "invalid-input")),
+    call: () => Promise.reject(new WebMCPInvocationError("unknown", reason)),
   }));
   await expect(required(native.get("read")).execute({})).rejects.toMatchObject({outcome: "unknown", reason: undefined});
+});
+
+
+test("a missing captured name never reaches mapping, admission or private work", async () => {
+  const bridge = createWebMCP<{type: "read"}>({onRegistrationError: () => ({type: "read"})});
+  const parse = vi.fn(() => undefined);
+  const call = vi.fn(() => Promise.resolve("read"));
+  const admission = vi.fn();
+  const declaration = defineWebMCPTool({name: "read", description: "Read", inputSchema: {type: "object"},
+    parseInput: parse, toMessage: (): {type: "read"} => ({type: "read"})});
+  stops.push(bridge.subscription([declaration]).subscribe(() => undefined, {call}));
+  stops.push(observeWebMCPCalls(document, {beforeDispatch: admission, onStart: admission}));
+  const caller = createWebMCPCaller(document); stops.push(caller.stop);
+  const captured = caller.capture();
+  await expect(captured.executeTool("private-invented-name", {private: "input"})).rejects.toMatchObject({
+    outcome: "cancelled-before-dispatch", reason: "unknown-tool", message: "Unknown WebMCP tool"});
+  expect(parse).not.toHaveBeenCalled(); expect(call).not.toHaveBeenCalled(); expect(admission).not.toHaveBeenCalled();
+  const aborted = new AbortController(); aborted.abort();
+  await expect(captured.executeTool("missing", {}, {signal: aborted.signal})).rejects.toMatchObject({outcome: "cancelled-before-dispatch", reason: undefined});
+  expect(await captured.executeTool("read", {})).toBe("read");
+  expect(call).toHaveBeenCalledTimes(1);
+  caller.stop();
+  await expect(captured.executeTool("missing", {})).rejects.toMatchObject({outcome: "cancelled-before-dispatch", reason: undefined});
 });

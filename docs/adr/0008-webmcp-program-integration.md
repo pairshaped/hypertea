@@ -34,6 +34,16 @@ caller. The adapter catches only this mapping boundary. Errors after the Program
 call retain cancellation or unknown semantics and do not carry this reason.
 A caller can record the known refusal through its normal result protocol.
 
+A scoped caller first checks its lifetime, abort signal and captured catalog.
+Only a still-current catalog can reject an absent name with reason `unknown-tool`
+and outcome `cancelled-before-dispatch`. This happens before mapping, observers
+or Program dispatch. The fixed error message contains no input or requested name.
+A built-in caller may return the already-offered captured tool names with this
+known refusal. Changed catalogs and ordinary cancellations carry no reason;
+unknown outcomes discard both refusal reasons. Global fallback name lookup and
+native registration keep their existing behavior.
+
+
 Removing a subscription or replacing its tools array rejects pending calls with
 `unknown`. An already-aborted signal rejects with `cancelled-before-dispatch`.
 Cancellation after dispatch retires the invocation and suppresses late message

@@ -372,6 +372,14 @@ Errors after dispatch keep the existing cancellation or `"unknown"` outcome;
 unknown errors never carry an invalid-input reason. A known refusal can be
 reported through the caller's normal result protocol without replaying work.
 
+A scoped caller rejects a name absent from its still-current captured catalog
+with `cancelled-before-dispatch` and reason `unknown-tool`, before input mapping
+or application work. The message is fixed and does not echo the requested name
+or input. An aborted caller or changed catalog keeps the ordinary cancellation
+result. Callers can use the captured `getTools()` names to explain what was
+offered. Unknown outcomes never carry either refusal reason.
+
+
 Run `hypertea-webmcp --project tsconfig.json --source webmcp.ts --output
 webmcp.generated.ts` after changing a selected message. Add the same command with
 `--check` to your build or CI to reject stale schemas. Generation requires

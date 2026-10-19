@@ -10,12 +10,13 @@ export type WebMCPValue =
   | Readonly<{ [key: string]: WebMCPValue; }>;
 
 export class WebMCPInvocationError extends Error {
-  readonly reason: "invalid-input" | undefined;
+  readonly reason: "invalid-input" | "unknown-tool" | undefined;
 
-  constructor(readonly outcome: "cancelled-before-dispatch" | "unknown", reason?: "invalid-input") {
+  constructor(readonly outcome: "cancelled-before-dispatch" | "unknown", reason?: "invalid-input" | "unknown-tool") {
     super(outcome === "unknown"
       ? "WebMCP stopped waiting after dispatch; the application outcome is unknown"
-      : reason === "invalid-input" ? "Invalid input for WebMCP tool" : "WebMCP invocation cancelled before dispatch");
+      : reason === "invalid-input" ? "Invalid input for WebMCP tool"
+      : reason === "unknown-tool" ? "Unknown WebMCP tool" : "WebMCP invocation cancelled before dispatch");
     this.reason = outcome === "cancelled-before-dispatch" ? reason : undefined;
     this.name = "WebMCPInvocationError";
   }
@@ -179,10 +180,11 @@ export function createWebMCPCaller(page: Document) {
           const sameCatalog = publication?.entries.size === entries.size
             && [...entries].every(([key, captured]) => publication.entries.get(key) === captured);
           if (lifetime.signal.aborted || options?.signal.aborted === true
-            || entry === undefined || (page as AgentDocument)[publicationKey] !== publication
+            || (page as AgentDocument)[publicationKey] !== publication
             || !sameCatalog) {
             throw new WebMCPInvocationError("cancelled-before-dispatch");
           }
+          if (entry === undefined) throw new WebMCPInvocationError("cancelled-before-dispatch", "unknown-tool");
           const signal = AbortSignal.any(options === undefined ? [lifetime.signal] : [lifetime.signal, options.signal]);
           return entry.tool.execute(input, { signal }, "fallback", handle);
         },
