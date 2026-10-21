@@ -34,6 +34,13 @@ caller. The adapter catches only this mapping boundary. Errors after the Program
 call retain cancellation or unknown semantics and do not carry this reason.
 A caller can record the known refusal through its normal result protocol.
 
+Use `isWebMCPInvocationError(error)` in catch blocks that receive failures from
+page tools. Shell and feature bundles have different class constructors, so
+`instanceof WebMCPInvocationError` cannot recognize the other bundle's error.
+The predicate recognizes canonical error instances through a shared weak set in
+the current JavaScript global; matching names or outcome fields alone do not
+qualify. Unknown errors keep their original outcome.
+
 A scoped caller first checks its lifetime, abort signal and captured catalog.
 Only a still-current catalog can reject an absent name with reason `unknown-tool`
 and outcome `cancelled-before-dispatch`. This happens before mapping, observers

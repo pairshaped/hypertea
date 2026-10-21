@@ -3,6 +3,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import { clicked, defineProgram, effectOrigin, effectInvocation, h, mountProgram, reply } from "./program.js";
 import {
   WebMCPInvocationError,
+  isWebMCPInvocationError,
   createWebMCP,
   createWebMCPCaller,
   defineWebMCPTool,
@@ -1026,4 +1027,19 @@ test("a missing captured name never reaches mapping, admission or private work",
   expect(call).toHaveBeenCalledTimes(1);
   caller.stop();
   await expect(captured.executeTool("missing", {})).rejects.toMatchObject({outcome: "cancelled-before-dispatch", reason: undefined});
+});
+
+test("independent modules recognize canonical invocation errors without trusting lookalike data", async () => {
+  vi.resetModules();
+  const feature = await import("./webmcp.js");
+  expect(feature.WebMCPInvocationError).not.toBe(WebMCPInvocationError);
+  const failure = new feature.WebMCPInvocationError("cancelled-before-dispatch", "invalid-input");
+  expect(failure instanceof WebMCPInvocationError).toBe(false);
+  expect(isWebMCPInvocationError(failure)).toBe(true);
+  expect(feature.isWebMCPInvocationError(new WebMCPInvocationError("unknown", "invalid-input"))).toBe(true);
+  for (const value of [undefined, null, "WebMCPInvocationError", 1, () => undefined, {},
+    {name: "WebMCPInvocationError", outcome: "cancelled-before-dispatch", reason: "invalid-input"},
+    Object.assign(new Error("private parser text"), {name: "WebMCPInvocationError", outcome: "cancelled-before-dispatch", reason: "invalid-input"})]) {
+    expect(isWebMCPInvocationError(value)).toBe(false);
+  }
 });

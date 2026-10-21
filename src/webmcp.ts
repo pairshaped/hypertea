@@ -9,6 +9,18 @@ export type WebMCPValue =
   | ReadonlyArray<WebMCPValue>
   | Readonly<{ [key: string]: WebMCPValue; }>;
 
+// Shell and feature bundles must recognize the same canonical failures without
+// treating arbitrary objects with outcome fields as safe pre-dispatch refusals.
+const invocationErrorsKey = Symbol.for("hypertea.webmcp.invocation-errors.v1");
+type InvocationErrorHost = { [invocationErrorsKey]?: WeakSet<object>; };
+const invocationErrorHost = globalThis as InvocationErrorHost;
+const invocationErrors = invocationErrorHost[invocationErrorsKey] ?? new WeakSet<object>();
+invocationErrorHost[invocationErrorsKey] = invocationErrors;
+
+export function isWebMCPInvocationError(value: unknown): value is WebMCPInvocationError {
+  return typeof value === "object" && value !== null && invocationErrors.has(value);
+}
+
 export class WebMCPInvocationError extends Error {
   readonly reason: "invalid-input" | "unknown-tool" | undefined;
 
@@ -19,6 +31,7 @@ export class WebMCPInvocationError extends Error {
       : reason === "unknown-tool" ? "Unknown WebMCP tool" : "WebMCP invocation cancelled before dispatch");
     this.reason = outcome === "cancelled-before-dispatch" ? reason : undefined;
     this.name = "WebMCPInvocationError";
+    invocationErrors.add(this);
   }
 }
 

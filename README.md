@@ -372,6 +372,13 @@ Errors after dispatch keep the existing cancellation or `"unknown"` outcome;
 unknown errors never carry an invalid-input reason. A known refusal can be
 reported through the caller's normal result protocol without replaying work.
 
+Use `isWebMCPInvocationError(error)` in catch blocks that receive failures from
+page tools. Shell and feature bundles have different class constructors, so
+`instanceof WebMCPInvocationError` cannot recognize the other bundle's error.
+The predicate recognizes canonical error instances through a shared weak set in
+the current JavaScript global; matching names or outcome fields alone do not
+qualify. Unknown errors keep their original outcome.
+
 A scoped caller rejects a name absent from its still-current captured catalog
 with `cancelled-before-dispatch` and reason `unknown-tool`, before input mapping
 or application work. The message is fixed and does not echo the requested name

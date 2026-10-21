@@ -171,7 +171,9 @@ failure. To retry, remove and re-add the subscription or replace its declaration
 An unavailable `document.modelContext` leaves the JavaScript bridge available.
 Without a browser document, the subscription is inert.
 
-`WebMCPInvocationError.outcome` distinguishes:
+Use `isWebMCPInvocationError(error)` to recognize errors across independently
+bundled shell and feature code. It accepts canonical instances, not lookalike
+objects or arbitrary errors. `WebMCPInvocationError.outcome` distinguishes:
 
 - `cancelled-before-dispatch`: a supplied signal was already aborted, or the
   caller invoked a callback whose registration had been removed.
