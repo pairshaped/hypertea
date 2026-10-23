@@ -23,47 +23,6 @@ declared browser tools to ordinary program messages and completion effects.
 `src/index.ts`, `src/program.ts`, `src/testing.ts`, and `src/webmcp.ts` own those
 interfaces. Benchmark and test internals are not public API.
 
-The optional `@pairshaped/hypertea/socket-transport` export owns one WebSocket
-connection, request correlation, response parsing and cleanup. Applications own
-the socket URL, credentials, operation contracts, retry decisions and visible
-failure state. It is not imported by the core runtime or WebMCP adapter.
-
-For example, an application can connect its generated status contract:
-
-```ts
-import { createSocketTransport } from "@pairshaped/hypertea/socket-transport";
-import { statusSocketPath, readStatusOperation } from "./generated/status";
-
-const transport = createSocketTransport();
-const socket = new WebSocket(new URL(statusSocketPath, location.href).href.replace(/^http/, "ws"));
-transport.connect(() => socket);
-socket.addEventListener("open", async () => {
-  const result = await transport.request(
-    readStatusOperation.identity,
-    { topic: "jobs" },
-    readStatusOperation.parseResponse,
-  );
-  if (result.status === "applied") showStatus(result.value);
-  else if (result.status === "unknown") showStatusUnavailable();
-});
-// Call transport.stop() when the owning island unmounts.
-```
-
-`not-dispatched` means no frame was sent; `unknown` means the server might have
-acted. Never replay a mutation after `unknown`. Read recovery belongs to the
-application contract. Reconnecting replaces the socket and never replays pending
-work.
-Cancellation after send returns `unknown`; cancellation before send returns
-`not-dispatched`. Always call `stop()` on unmount to close the socket and settle
-pending requests. A caller may create a fresh transport for a remount.
-
-The operation wire format is version 2. A request carries `version`,
-`requestId`, `operation` and `payload`; a reply carries `version`, `requestId`,
-`status` and either `payload` or `error`. The transport increments `requestId`
-across reconnects within one mount and ignores callbacks from replaced sockets.
-Version 1 or malformed replies close the socket. A mutation must never be
-replayed automatically.
-
 ## Status
 
 The runtime exposes:
@@ -257,8 +216,7 @@ signals when the operation must also stop on caller cancellation. This API does
 not add keyed replacement or retry a request.
 
 Ordinary effects keep their own recovery policy. Writes with an unknown outcome
-must not be replayed without a server idempotency guarantee. Socket request ids
-provide correlation, not that guarantee. The optional live subscription below
+must not be replayed without a server idempotency guarantee. The optional live subscription below
 owns retries for an observational stream while it remains subscribed.
 
 ## Subscriptions
