@@ -354,10 +354,34 @@ line endings and a leading BOM; `maxEventBytes` must be a positive safe integer.
 An oversized record is rejected before delivery. A replay should send separate
 records so one batch cannot exceed this cap.
 
-Authentication rejection, other HTTP errors, wrong content types and fetch network
-failures have distinct default messages. `describeError(error, defaultText)` can
-supply application wording for transport failures. It does not intercept decoder
-errors, and only a `TypeError` thrown by fetch is classified as a network failure.
+Every failure the transport raises itself is a `LiveStreamError` whose `failure`
+is a `LiveStreamFailure`: `network`, `rejected` (401 or 403), `status`,
+`content-type` (`contentType` is `undefined` when the header is missing),
+`no-body`, `record-too-large` (`limitBytes`) or `invalid-utf8`. The `message`
+keeps a neutral default and `cause` holds the original error where there is one.
+`describeError(error, defaultText)` supplies application wording. Narrow with
+`instanceof` and switch on the kind instead of matching message text:
+
+```ts
+describeError: (error, defaultText) => {
+  if (!(error instanceof LiveStreamError)) return defaultText;
+  const { failure } = error;
+  switch (failure.kind) {
+    case "rejected": return "Sign in again to keep this page live.";
+    case "network": return "You appear to be offline.";
+    case "status":
+    case "content-type":
+    case "no-body":
+    case "record-too-large":
+    case "invalid-utf8": return defaultText;
+    default: return assertNever(failure);
+  }
+},
+```
+
+Errors that did not come from the transport, such as a `decode` throw or an
+abort, pass through untouched. Only a `TypeError` thrown by fetch is classified
+as `network`; a fatal-decoder `TypeError` is `invalid-utf8`.
 
 Custom transports implement `open(cursor, signal, opened): AsyncIterable<Record>`
 for one attempt. Call `opened()` when healthy, honor abort and release resources

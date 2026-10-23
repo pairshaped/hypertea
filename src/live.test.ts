@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { expect, test, vi } from "vitest";
-import { readSse, eventStream, liveSubscription, type LiveTransport, type LiveHealth } from "./live.js";
+import { readSse, eventStream, liveSubscription, LiveStreamError, type LiveStreamFailure, type LiveTransport, type LiveHealth } from "./live.js";
 
 function body(parts: Array<Uint8Array>) {
   return new ReadableStream<Uint8Array>({
@@ -427,4 +427,61 @@ test("abort releases the reader lock even while the generator is paused at yield
   controller.abort(); await flush();
   expect(canceled).toHaveBeenCalledTimes(1); expect(stream.locked).toBe(false);
   expect((await records.next()).done).toBe(true);
+});
+
+const assertNever = (value: never): never => { throw new Error(`Unhandled ${JSON.stringify(value)}`); };
+const wording = (failure: LiveStreamFailure): string => {
+  switch (failure.kind) {
+    case "network": return "offline";
+    case "rejected": return `sign in again (${String(failure.status)})`;
+    case "status": return `server ${String(failure.status)}`;
+    case "content-type": return `proxy ${failure.contentType ?? "none"}`;
+    case "no-body": return "empty";
+    case "record-too-large": return `over ${String(failure.limitBytes)}`;
+    case "invalid-utf8": return "garbled";
+    default: return assertNever(failure);
+  }
+};
+
+test("every transport failure is a LiveStreamError with a structured failure", async () => {
+  const sse = { "content-type": "text/event-stream" };
+  const cases: Array<[() => Promise<Response>, LiveStreamFailure, string]> = [
+    [() => Promise.reject(new TypeError("offline")), { kind: "network" }, "Could not reach"],
+    [() => Promise.resolve(new Response("", { status: 401 })), { kind: "rejected", status: 401 }, "credentials were rejected"],
+    [() => Promise.resolve(new Response("", { status: 403 })), { kind: "rejected", status: 403 }, "HTTP 403"],
+    [() => Promise.resolve(new Response("", { status: 503 })), { kind: "status", status: 503 }, "HTTP 503"],
+    [() => Promise.resolve(new Response("html", { headers: { "content-type": "text/html" } })), { kind: "content-type", contentType: "text/html" }, "text/html"],
+    [() => Promise.resolve(new Response()), { kind: "content-type", contentType: undefined }, "no content type"],
+    [() => Promise.resolve(new Response(undefined, { headers: sse })), { kind: "no-body" }, "no response body"],
+    [() => Promise.resolve(new Response(encode("data: abcdefgh\n\n"), { headers: sse })), { kind: "record-too-large", limitBytes: 8 }, "8 bytes"],
+    [() => Promise.resolve(new Response(Uint8Array.of(255), { headers: sse })), { kind: "invalid-utf8" }, "invalid UTF-8"],
+  ];
+  for (const [fetcher, failure, message] of cases) {
+    const error: unknown = await collect(eventStream({ url: "/events", fetch: fetcher, maxEventBytes: 8 })(undefined, new AbortController().signal, vi.fn())).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(LiveStreamError);
+    expect((error as LiveStreamError).failure).toEqual(failure);
+    expect((error as LiveStreamError).message).toContain(message);
+    expect(wording(failure)).not.toBe("");
+  }
+});
+
+test("readSse reports invalid UTF-8 and oversize records as LiveStreamError, keeping the decoder cause", async () => {
+  const error: unknown = await collect(readSse(body([Uint8Array.of(0xc3)]), new AbortController().signal)).catch((caught: unknown) => caught);
+  expect(error).toBeInstanceOf(LiveStreamError);
+  expect((error as LiveStreamError).failure).toEqual({ kind: "invalid-utf8" });
+  expect((error as LiveStreamError).cause).toBeInstanceOf(TypeError);
+  await expect(collect(readSse(body([encode("data: abc")]), new AbortController().signal, { maxEventBytes: 4 })))
+    .rejects.toMatchObject({ failure: { kind: "record-too-large", limitBytes: 4 } });
+});
+
+test("describeError receives the LiveStreamError and can switch on its failure kind", async () => {
+  const seen: Array<unknown> = [];
+  const describeError = (error: unknown, text: string) => {
+    seen.push(error);
+    return error instanceof LiveStreamError ? wording(error.failure) : text;
+  };
+  const open = eventStream({ url: "/events", fetch: () => Promise.resolve(new Response("", { status: 401 })), describeError });
+  await expect(collect(open(undefined, new AbortController().signal, vi.fn()))).rejects.toThrow("sign in again (401)");
+  expect(seen[0]).toBeInstanceOf(LiveStreamError);
+  expect(() => wording({ kind: "bogus" } as never)).toThrow("Unhandled");
 });

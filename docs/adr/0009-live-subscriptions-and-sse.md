@@ -79,10 +79,16 @@ decodes bounded segments, so fragmented long lines do not require repeatedly
 re-encoding all pending text. Replays should use one bounded record per update.
 Readers are canceled and their locks released on completion, failure and abort.
 
-Credential rejection, other HTTP status failures, wrong content types and fetch
-network failures receive neutral error text. Only a `TypeError` originating from
-fetch is classified as a network failure. `describeError` customizes transport
-wording; decoder exceptions pass through unchanged.
+Every failure the transport or parser raises itself is a `LiveStreamError` with a
+structured `failure`: `network`, `rejected` (401 or 403), `status`, `content-type`
+(`contentType` is `undefined` when the header is missing), `no-body`,
+`record-too-large` (`limitBytes`) or `invalid-utf8`. `message` keeps neutral
+default text and `cause` holds the original error where one exists. Only a
+`TypeError` originating from fetch is a `network` failure; the fatal decoder's
+`TypeError` becomes `invalid-utf8`. `describeError(error, defaultText)` customizes
+wording; callers narrow with `instanceof LiveStreamError` and switch on
+`failure.kind` rather than matching text. Other errors, such as a `decode` throw
+or an abort, pass through unchanged.
 
 Fetch, timers and TextDecoder have injectable implementations with real defaults.
 Tests use fake transports, fetch responses, timers and direct microtask progression.

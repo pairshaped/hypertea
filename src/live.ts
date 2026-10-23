@@ -8,6 +8,26 @@ export type SseOptions = Readonly<{
   TextDecoder?: typeof TextDecoder;
 }>;
 
+/** @public Part of the package boundary documented in README.md. */
+export type LiveStreamFailure =
+  | Readonly<{ kind: "network" }>
+  | Readonly<{ kind: "rejected"; status: 401 | 403 }>
+  | Readonly<{ kind: "status"; status: number }>
+  | Readonly<{ kind: "content-type"; contentType: string | undefined }>
+  | Readonly<{ kind: "no-body" }>
+  | Readonly<{ kind: "record-too-large"; limitBytes: number }>
+  | Readonly<{ kind: "invalid-utf8" }>;
+
+/** @public Part of the package boundary documented in README.md. */
+export class LiveStreamError extends Error {
+  readonly failure: LiveStreamFailure;
+  constructor(failure: LiveStreamFailure, message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "LiveStreamError";
+    this.failure = failure;
+  }
+}
+
 /** Parse one stream. Only records terminated by a blank line are delivered. */
 export async function* readSse(
   stream: ReadableStream<Uint8Array>, signal: AbortSignal, options: SseOptions = {},
@@ -31,7 +51,14 @@ export async function* readSse(
   let data: Array<string> = [];
   const count = (size: number) => {
     bytes += size;
-    if (bytes > limit) throw new Error(`Live stream record exceeds ${String(limit)} bytes; refused without partial delivery`);
+    if (bytes > limit) throw new LiveStreamError({ kind: "record-too-large", limitBytes: limit }, `Live stream record exceeds ${String(limit)} bytes; refused without partial delivery`);
+  };
+  const utf8 = (input?: Uint8Array, stream?: boolean): string => {
+    try {
+      return decoder.decode(input, { stream: stream ?? false });
+    } catch (error) {
+      throw new LiveStreamError({ kind: "invalid-utf8" }, "Live stream contained invalid UTF-8", { cause: error });
+    }
   };
   const line = (): SseRecord | undefined => {
     const text = pending;
@@ -57,7 +84,7 @@ export async function* readSse(
       const chunk = await reader.read();
       if (aborted()) return;
       if (chunk.done) {
-        decoder.decode(); // A truncated UTF-8 sequence fails even in an unfinished record.
+        utf8(); // A truncated UTF-8 sequence fails even in an unfinished record.
         if (cr) {
           const record = line();
           if (record !== undefined) yield record;
@@ -77,7 +104,7 @@ export async function* readSse(
           const terminated = end < chunk.value.length;
           const next = terminated ? end + 1 : end;
           count(next - offset);
-          const text = decoder.decode(chunk.value.subarray(offset, next), { stream: true });
+          const text = utf8(chunk.value.subarray(offset, next), true);
           pending += terminated ? text.slice(0, -1) : text;
           offset = next;
           if (terminated) {
@@ -139,14 +166,14 @@ export function eventStream<Cursor = string>(options: EventStreamOptions): LiveT
           headers, signal, cache: "no-store", credentials: options.credentials ?? "same-origin",
         });
       } catch (error) {
-        if (error instanceof TypeError) throw new Error(`Could not reach the live stream server: ${error.message || "network failure"}`, { cause: error });
+        if (error instanceof TypeError) throw new LiveStreamError({ kind: "network" }, `Could not reach the live stream server: ${error.message || "network failure"}`, { cause: error });
         throw error;
       }
-      if (response.status === 401 || response.status === 403) throw new Error(`Live stream credentials were rejected (HTTP ${String(response.status)})`);
-      if (!response.ok) throw new Error(`Live stream server answered HTTP ${String(response.status)}`);
-      const kind = response.headers.get("content-type") ?? "no content type";
-      if (kind.split(";")[0]?.trim().toLowerCase() !== "text/event-stream") throw new Error(`Live stream response is not text/event-stream (${kind}); a proxy may have answered instead`);
-      if (response.body === null) throw new Error("Live stream has no response body");
+      if (response.status === 401 || response.status === 403) throw new LiveStreamError({ kind: "rejected", status: response.status }, `Live stream credentials were rejected (HTTP ${String(response.status)})`);
+      if (!response.ok) throw new LiveStreamError({ kind: "status", status: response.status }, `Live stream server answered HTTP ${String(response.status)}`);
+      const contentType = response.headers.get("content-type") ?? undefined;
+      if (contentType?.split(";")[0]?.trim().toLowerCase() !== "text/event-stream") throw new LiveStreamError({ kind: "content-type", contentType }, `Live stream response is not text/event-stream (${contentType ?? "no content type"}); a proxy may have answered instead`);
+      if (response.body === null) throw new LiveStreamError({ kind: "no-body" }, "Live stream has no response body");
       if (signal.aborted) return;
       opened();
       yield* readSse(response.body, signal, options);
