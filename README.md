@@ -256,13 +256,108 @@ signal belongs to one runner and aborts on Program stop. A caller's
 signals when the operation must also stop on caller cancellation. This API does
 not add keyed replacement or retry a request.
 
-Hypertea has no shared retry policy. The Curling adapter inventory found no two
-workflows requiring the same safe retry semantics. Reads retain their explicit
-recovery paths; writes with an unknown outcome must not be replayed without a
-server idempotency guarantee. Socket request ids provide correlation, not that
-guarantee. Cancellation, page visibility changes and reconnects do not schedule
-new attempts. See [managed effects and subscriptions](docs/adr/0002-managed-effects-and-subscriptions.md)
-for the inventory and decision.
+Ordinary effects keep their own recovery policy. Writes with an unknown outcome
+must not be replayed without a server idempotency guarantee. Socket request ids
+provide correlation, not that guarantee. The optional live subscription below
+owns retries for an observational stream while it remains subscribed.
+
+## Subscriptions
+
+A program's `subscriptions` callback returns
+`ReadonlyArray<ProgramSubscription<Msg> | false>`. Keep each subscription in a
+fixed slot. Use `condition && subscription` or `condition ? subscription : false`
+for an absent entry. A `false` slot starts nothing; replacing a subscription with
+`false` disposes it. Replacing `false` with a subscription starts it.
+
+Matching is positional, then compares the subscription key. A conditional spread
+or filtering out an earlier entry shifts later entries and restarts them. Keep
+ownership, publication, and live-stream slots stable.
+
+## Live subscriptions
+
+Import `liveSubscription`, `eventStream` and the types you need from
+`@pairshaped/hypertea/live`. The main entry does not import this module.
+
+```ts
+import { eventStream, liveSubscription, type SseRecord } from "@pairshaped/hypertea/live"
+
+type Msg = { type: "record"; data: string } | { type: "disconnected" }
+
+const feed = liveSubscription<SseRecord, string, Msg>({
+  key: "feed:baseline-1",
+  after: "0",
+  open: eventStream({ url: "/events", cursor: { header: "Last-Event-ID" } }),
+  decode: (record) => ({
+    message: { type: "record", data: record.data },
+    cursor: record.id,
+  }),
+  disconnected: () => ({ type: "disconnected" }),
+  retry: { initialMs: 1000, maxMs: 30000, resetOn: "message" },
+})
+```
+
+The key names the resource and any stable baseline, never the moving cursor.
+Options captured at first subscribe, including `after`, `decode` and callbacks,
+stay fixed until the key changes or the slot is removed. Each subscription owns
+its connection, cursor and retry timer. Startup is deferred by one microtask so
+synchronous transport callbacks cannot re-enter subscription installation.
+
+`decode(record, cursor)` returns `{ message, cursor? }`. Omit `cursor` to keep the
+previous value. The core stores the returned value exactly; the decoder owns
+monotonicity and validation. Inclusive replay can deliver duplicates. Throw to
+refuse a record: the connection closes, the cursor stays unchanged and retries
+continue. `onCursor(cursor)` runs after acceptance, including when the retained
+cursor is `undefined`. `onError(error)` receives each failed attempt, including
+an unexpected clean stream end, but not disposal.
+
+`health` maps `{ kind: "healthy" } | { kind: "problem"; text: string }` into a
+message once per change. `connected` runs once per healthy connection;
+`disconnected` runs once per transition to unhealthy, including a first failed
+attempt. A quiet open connection is healthy. These callbacks only produce
+messages; the reducer owns UI state.
+
+Retry delay starts at `initialMs`, multiplies by `factor` (default 2), and caps at
+`maxMs`. Set `resetOn: "open"` to reset at connection establishment, or
+`resetOn: "message"` to reset after an accepted record. Equal initial and maximum
+delays give a fixed interval. Delays must be finite and positive, with
+`initialMs <= maxMs <= 2147483647` and a finite factor of at least 1. There is no
+attempt limit. Remove the subscription, using `false` in its slot, when the app
+reaches a terminal state or needs a new snapshot. Disposal aborts reads, clears
+pending retries and suppresses late messages, even during decoding.
+
+`eventStream<Cursor>({ url, headers?, cursor?, credentials?, maxEventBytes?,
+describeError?, fetch?, TextDecoder? })` returns a transport. It sends
+`Accept: text/event-stream`, uses `cache: "no-store"`, and defaults credentials
+to `"same-origin"`. Pass `"omit"` for a credential-free stream. Caller headers
+are preserved except `Accept`, which always requests the stream format.
+
+Choose `{ header: "Last-Event-ID" }` or `{ param: "since_ms" }` for cursor
+placement. Values use `String(cursor)`; an undefined cursor or absent cursor
+option sends no cursor. The query form replaces that parameter while keeping
+other parameters and the fragment. With no caller headers, query cursors require
+no custom request header and keep cross-origin GETs eligible for simple CORS.
+The endpoint still needs the appropriate CORS response headers.
+
+Records are `{ id, event, data }`. The parser supports CR, LF and CRLF, multiline
+data, comments and fragmented UTF-8. It ignores NUL-containing ids, unknown fields
+and server `retry:` hints. The default event name is `message`. Records without
+data and unfinished records at EOF are discarded. Invalid UTF-8 fails the stream.
+The default cap is 1048576 raw bytes per record, including field names, comments,
+line endings and a leading BOM; `maxEventBytes` must be a positive safe integer.
+An oversized record is rejected before delivery. A replay should send separate
+records so one batch cannot exceed this cap.
+
+Authentication rejection, other HTTP errors, wrong content types and fetch network
+failures have distinct default messages. `describeError(error, defaultText)` can
+supply application wording for transport failures. It does not intercept decoder
+errors, and only a `TypeError` thrown by fetch is classified as a network failure.
+
+Custom transports implement `open(cursor, signal, opened): AsyncIterable<Record>`
+for one attempt. Call `opened()` when healthy, honor abort and release resources
+when iteration ends. `readSse(stream, signal, { maxEventBytes?, TextDecoder? })`
+is also exported as an async generator. For deterministic tests, inject `fetch`
+and `TextDecoder` into the SSE transport, and `setTimeout` and `clearTimeout` into
+the live subscription. All default effects live inside this module.
 
 `update(model, message, origin)` receives the chain's `native` or `fallback`
 origin, or `undefined` for human and plain subscription messages. Direct callers
@@ -485,7 +580,7 @@ simulated async actions.
 
 - No whole-app router.
 - No server runtime.
-- No ORM, RPC, or transport layer.
+- No ORM or general-purpose RPC framework.
 - No large component system.
 - No direct replacement for Elm.
 
@@ -499,6 +594,7 @@ simulated async actions.
 - [0006: Browserless Program Testing](docs/adr/0006-browserless-program-testing.md)
 - [0007: Field Value Ownership After Mount](docs/adr/0007-field-value-ownership.md)
 - [0008: WebMCP uses program calls and replies](docs/adr/0008-webmcp-program-integration.md)
+- [0009: Live subscriptions and SSE](docs/adr/0009-live-subscriptions-and-sse.md)
 
 
 `createWebMCPCaller(document).captureReady()` waits for the current publication's

@@ -31,7 +31,11 @@ call retires its dispatch chain. Its invocation signal lets an adapter cooperate
 with caller cancellation; resource APIs otherwise keep running. Late replies are
 ignored.
 
-Subscriptions are declared from model state as `ProgramSubscription<Msg>` values.
+Subscriptions are declared from model state as
+`ReadonlyArray<ProgramSubscription<Msg> | false>`. A `false` entry reserves an
+empty fixed slot. Switching to `false` disposes that slot; switching from it starts
+the subscription. Matching stays positional, so never remove an earlier array
+entry to disable it.
 The runtime preserves or replaces instances as state changes. Calls belong to the
 issuing instance, so replacing it rejects its pending calls.
 
@@ -81,7 +85,10 @@ chosen contract adds one controller per pending runner and no scheduling runtime
 
 ## Retry policy
 
-Hypertea has no declarative retry value or retry interpreter. The current adapter
+Ordinary effects have no declarative retry value or retry interpreter.
+[Live subscriptions](0009-live-subscriptions-and-sse.md) own observational stream
+reconnection with bounded delay and no attempt limit while subscribed. This does
+not grant permission to replay commands. The current adapter
 inventory does not establish two workflows needing the same safe retry policy.
 Applications keep their explicit recovery behavior.
 
@@ -142,6 +149,7 @@ Subscriptions reconcile synchronously after the next model is installed, before
 dispatch returns, even when rendering is queued. Reads and unload protection
 therefore reflect the current model without awaiting renderer settlement. Child
 subscription positions stay stable so this publication cannot withdraw tool calls.
+Use `false` for an absent child instead of a conditional spread or filtered list.
 
 A pending card has an opaque mount-scoped handle, feature token, scope and material
 revision. Human decisions consume the handle and enter the target's ordinary

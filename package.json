@@ -38,6 +38,10 @@
     "./page-state": {
       "types": "./dist/page-state.d.ts",
       "import": "./dist/page-state.js"
+    },
+    "./live": {
+      "types": "./dist/live.d.ts",
+      "import": "./dist/live.js"
     }
   },
   "files": [
