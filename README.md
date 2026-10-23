@@ -357,7 +357,8 @@ records so one batch cannot exceed this cap.
 Every failure the transport raises itself is a `LiveStreamError` whose `failure`
 is a `LiveStreamFailure`: `network`, `rejected` (401 or 403), `status`,
 `content-type` (`contentType` is `undefined` when the header is missing),
-`no-body`, `record-too-large` (`limitBytes`) or `invalid-utf8`. The `message`
+`no-body`, `record-too-large` (`limitBytes`), `invalid-utf8` or `disconnected` (the
+connection dropped mid-stream; `cause` holds the read error). The `message`
 keeps a neutral default and `cause` holds the original error where there is one.
 `describeError(error, defaultText)` supplies application wording. Narrow with
 `instanceof` and switch on the kind instead of matching message text:
@@ -373,11 +374,18 @@ describeError: (error, defaultText) => {
     case "content-type":
     case "no-body":
     case "record-too-large":
-    case "invalid-utf8": return defaultText;
+    case "invalid-utf8":
+    case "disconnected": return defaultText;
     default: return assertNever(failure);
   }
 },
 ```
+
+When `describeError` is set, the thrown error is still a `LiveStreamError` with the
+original `failure` and the reworded `message`. Invalid options, such as a bad
+`maxEventBytes`, are programmer errors: `eventStream` and `readSse` throw
+`RangeError("Invalid event byte limit")` and `describeError` never sees them.
+Every runtime stream failure is a `LiveStreamError`.
 
 Errors that did not come from the transport, such as a `decode` throw or an
 abort, pass through untouched. Only a `TypeError` thrown by fetch is classified

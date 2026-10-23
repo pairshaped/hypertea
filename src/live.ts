@@ -16,7 +16,8 @@ export type LiveStreamFailure =
   | Readonly<{ kind: "content-type"; contentType: string | undefined }>
   | Readonly<{ kind: "no-body" }>
   | Readonly<{ kind: "record-too-large"; limitBytes: number }>
-  | Readonly<{ kind: "invalid-utf8" }>;
+  | Readonly<{ kind: "invalid-utf8" }>
+  | Readonly<{ kind: "disconnected" }>;
 
 /** @public Part of the package boundary documented in README.md. */
 export class LiveStreamError extends Error {
@@ -28,12 +29,17 @@ export class LiveStreamError extends Error {
   }
 }
 
+function eventLimit(options: SseOptions): number {
+  const limit = options.maxEventBytes ?? 1_048_576;
+  if (!Number.isSafeInteger(limit) || limit < 1) throw new RangeError("Invalid event byte limit");
+  return limit;
+}
+
 /** Parse one stream. Only records terminated by a blank line are delivered. */
 export async function* readSse(
   stream: ReadableStream<Uint8Array>, signal: AbortSignal, options: SseOptions = {},
 ): AsyncGenerator<SseRecord> {
-  const limit = options.maxEventBytes ?? 1_048_576;
-  if (!Number.isSafeInteger(limit) || limit < 1) throw new Error("Invalid event byte limit");
+  const limit = eventLimit(options);
   const aborted = () => signal.aborted;
   const decoder = new (options.TextDecoder ?? TextDecoder)("utf-8", { fatal: true });
   const reader = stream.getReader();
@@ -53,9 +59,9 @@ export async function* readSse(
     bytes += size;
     if (bytes > limit) throw new LiveStreamError({ kind: "record-too-large", limitBytes: limit }, `Live stream record exceeds ${String(limit)} bytes; refused without partial delivery`);
   };
-  const utf8 = (input?: Uint8Array, stream?: boolean): string => {
+  const utf8 = (input?: Uint8Array, streaming?: boolean): string => {
     try {
-      return decoder.decode(input, { stream: stream ?? false });
+      return decoder.decode(input, { stream: streaming ?? false });
     } catch (error) {
       throw new LiveStreamError({ kind: "invalid-utf8" }, "Live stream contained invalid UTF-8", { cause: error });
     }
@@ -81,7 +87,13 @@ export async function* readSse(
   };
   try {
     while (!aborted()) {
-      const chunk = await reader.read();
+      let chunk: ReadableStreamReadResult<Uint8Array>;
+      try {
+        chunk = await reader.read();
+      } catch (error) {
+        if (aborted()) return;
+        throw new LiveStreamError({ kind: "disconnected" }, "Live stream connection dropped", { cause: error });
+      }
       if (aborted()) return;
       if (chunk.done) {
         utf8(); // A truncated UTF-8 sequence fails even in an unfinished record.
@@ -143,6 +155,7 @@ export type EventStreamOptions = SseOptions & Readonly<{
 
 /** One fetch connection, with reconnect timing owned by liveSubscription. */
 export function eventStream<Cursor = string>(options: EventStreamOptions): LiveTransport<SseRecord, Cursor> {
+  eventLimit(options);
   return async function*(cursor, signal, opened) {
     const headers = new Headers(options.headers);
     headers.set("Accept", "text/event-stream");
@@ -179,7 +192,8 @@ export function eventStream<Cursor = string>(options: EventStreamOptions): LiveT
       yield* readSse(response.body, signal, options);
     } catch (error) {
       if (options.describeError === undefined || signal.aborted) throw error;
-      throw new Error(options.describeError(error, errorText(error)), { cause: error });
+      const text = options.describeError(error, errorText(error));
+      throw error instanceof LiveStreamError ? new LiveStreamError(error.failure, text, { cause: error }) : new Error(text, { cause: error });
     } finally {
       await response?.body?.cancel().catch(() => undefined);
     }

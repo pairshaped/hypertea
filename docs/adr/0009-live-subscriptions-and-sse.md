@@ -82,12 +82,17 @@ Readers are canceled and their locks released on completion, failure and abort.
 Every failure the transport or parser raises itself is a `LiveStreamError` with a
 structured `failure`: `network`, `rejected` (401 or 403), `status`, `content-type`
 (`contentType` is `undefined` when the header is missing), `no-body`,
-`record-too-large` (`limitBytes`) or `invalid-utf8`. `message` keeps neutral
+`record-too-large` (`limitBytes`), `invalid-utf8` or `disconnected` (a read
+failure after the stream opened). `message` keeps neutral
 default text and `cause` holds the original error where one exists. Only a
 `TypeError` originating from fetch is a `network` failure; the fatal decoder's
 `TypeError` becomes `invalid-utf8`. `describeError(error, defaultText)` customizes
 wording; callers narrow with `instanceof LiveStreamError` and switch on
-`failure.kind` rather than matching text. Other errors, such as a `decode` throw
+`failure.kind` rather than matching text. With `describeError` set, the thrown error stays a `LiveStreamError` with the same
+`failure` and the reworded message. Invalid options (`maxEventBytes`) are
+programmer errors: `eventStream(options)` and `readSse` throw `RangeError`, never
+reaching `describeError`. Every runtime stream failure is a `LiveStreamError`.
+Other errors, such as a `decode` throw
 or an abort, pass through unchanged.
 
 Fetch, timers and TextDecoder have injectable implementations with real defaults.

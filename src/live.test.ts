@@ -239,7 +239,8 @@ test("two mounted streams own their cursors and abort signals independently", as
 
 test("invalid limits and retry policies fail before subscribing", async () => {
   for (const maxEventBytes of [0, -1, NaN, Infinity, 1.5]) {
-    await expect(collect(readSse(body([]), new AbortController().signal, { maxEventBytes }))).rejects.toThrow("Invalid event byte limit");
+    await expect(collect(readSse(body([]), new AbortController().signal, { maxEventBytes }))).rejects.toThrow(RangeError);
+    expect(() => eventStream({ url: "/events", maxEventBytes })).toThrow("Invalid event byte limit");
   }
   for (const retry of [
     { initialMs: 0, maxMs: 1 }, { initialMs: 2, maxMs: 1 }, { initialMs: NaN, maxMs: 10 },
@@ -283,7 +284,9 @@ test("transport error descriptions preserve causes and never relabel reader Type
   }
   const error = new TypeError("broken reader");
   const open = eventStream({ url: "/events", fetch: () => Promise.resolve(new Response(new ReadableStream({ start(controller) { controller.error(error); } }), { headers: { "content-type": "text/event-stream" } })) });
-  await expect(collect(open(undefined, new AbortController().signal, vi.fn()))).rejects.toBe(error);
+  const dropped: unknown = await collect(open(undefined, new AbortController().signal, vi.fn())).catch((caught: unknown) => caught);
+  expect(dropped).toBeInstanceOf(LiveStreamError);
+  expect(dropped).toMatchObject({ failure: { kind: "disconnected" }, message: "Live stream connection dropped", cause: error });
   await expect(collect(eventStream({ url: "/events", fetch: () => Promise.resolve(new Response()) })(undefined, new AbortController().signal, vi.fn()))).rejects.toThrow("no content type");
 });
 
@@ -309,7 +312,7 @@ test("reader cancellation failures still release the lock", async () => {
   controller.abort();
   expect(await reading).toEqual([]); expect(stream.locked).toBe(false);
   const errored = new ReadableStream<Uint8Array>({ start(controller) { controller.error(new Error("read failed")); } });
-  await expect(collect(readSse(errored, new AbortController().signal))).rejects.toThrow("read failed");
+  await expect(collect(readSse(errored, new AbortController().signal))).rejects.toMatchObject({ failure: { kind: "disconnected" }, cause: { message: "read failed" } });
   expect(errored.locked).toBe(false);
 });
 
@@ -439,6 +442,7 @@ const wording = (failure: LiveStreamFailure): string => {
     case "no-body": return "empty";
     case "record-too-large": return `over ${String(failure.limitBytes)}`;
     case "invalid-utf8": return "garbled";
+    case "disconnected": return "dropped";
     default: return assertNever(failure);
   }
 };
@@ -481,7 +485,16 @@ test("describeError receives the LiveStreamError and can switch on its failure k
     return error instanceof LiveStreamError ? wording(error.failure) : text;
   };
   const open = eventStream({ url: "/events", fetch: () => Promise.resolve(new Response("", { status: 401 })), describeError });
-  await expect(collect(open(undefined, new AbortController().signal, vi.fn()))).rejects.toThrow("sign in again (401)");
+  const thrown: unknown = await collect(open(undefined, new AbortController().signal, vi.fn())).catch((caught: unknown) => caught);
+  expect(thrown).toBeInstanceOf(LiveStreamError);
+  expect(thrown).toMatchObject({ failure: { kind: "rejected", status: 401 }, message: "sign in again (401)" });
   expect(seen[0]).toBeInstanceOf(LiveStreamError);
   expect(() => wording({ kind: "bogus" } as never)).toThrow("Unhandled");
+});
+
+test("a read that fails after abort is a quiet return, not a disconnect", async () => {
+  const controller = new AbortController();
+  const failing = { read: () => { controller.abort(); return Promise.reject(new Error("late")); }, cancel: () => Promise.resolve(), releaseLock: () => undefined };
+  const stream = { getReader: () => failing } as unknown as ReadableStream<Uint8Array>;
+  expect(await collect(readSse(stream, controller.signal))).toEqual([]);
 });
