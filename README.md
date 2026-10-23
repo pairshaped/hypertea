@@ -264,10 +264,12 @@ owns retries for an observational stream while it remains subscribed.
 ## Subscriptions
 
 A program's `subscriptions` callback returns
-`ReadonlyArray<ProgramSubscription<Msg> | false>`. Keep each subscription in a
-fixed slot. Use `condition && subscription` or `condition ? subscription : false`
-for an absent entry. A `false` slot starts nothing; replacing a subscription with
-`false` disposes it. Replacing `false` with a subscription starts it.
+`ReadonlyArray<ProgramSubscription<Msg>>`. Keep each subscription in a fixed
+slot. For an absent entry, use
+`condition ? subscription : emptySubscription("slot-name:off")`. An empty
+subscription starts nothing. Switching a slot from a real subscription to the
+empty one disposes it, and switching back starts it, because the key changes at
+that position. Later slots are not restarted.
 
 Matching is positional, then compares the subscription key. A conditional spread
 or filtering out an earlier entry shifts later entries and restarts them. Keep
@@ -328,7 +330,7 @@ Retry delay starts at `initialMs`, multiplies by `factor` (default 2), and caps 
 `resetOn: "message"` to reset after an accepted record. Equal initial and maximum
 delays give a fixed interval. Delays must be finite and positive, with
 `initialMs <= maxMs <= 2147483647` and a finite factor of at least 1. There is no
-attempt limit. Remove the subscription, using `false` in its slot, when the app
+attempt limit. Remove the subscription, using `emptySubscription` in its slot, when the app
 reaches a terminal state or needs a new snapshot. Disposal aborts reads, clears
 pending retries and suppresses late messages, even during decoding.
 

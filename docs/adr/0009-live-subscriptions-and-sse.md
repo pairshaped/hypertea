@@ -16,9 +16,9 @@ a message and optional cursor. The core retains an omitted cursor and stores a
 returned cursor exactly. Monotonicity, deduplication and terminal messages belong
 to the application. A rejected record never advances the cursor.
 
-The public program subscription list accepts `false` for an empty fixed slot.
-The adapter preserves that value for the positional subscription reconciler.
-Disabling an earlier subscription therefore does not move or restart a later one.
+A program keeps a slot stable with `emptySubscription(key)`, an entry that
+subscribes to nothing. Disabling an earlier subscription therefore does not move or
+restart a later one.
 Matching remains positional and compares the key within the slot. A live key
 names the resource and any stable baseline, never its changing cursor. Captured
 options remain fixed until that slot's key changes or the subscription is removed.
@@ -34,7 +34,7 @@ prevents the transport from opening or dispatching anything.
 Every mount owns an abort controller per attempt and at most one retry timer.
 Disposal aborts the current attempt, cancels its retry and blocks later dispatch,
 including a decode callback that disposes the subscription before returning.
-Applications end a stream by returning `false` in its slot. The core has no
+Applications end a stream by returning `emptySubscription` in its slot. The core has no
 terminal message or attempt limit.
 
 Retry delay grows from `initialMs` by `factor` (default 2), capped at `maxMs`.

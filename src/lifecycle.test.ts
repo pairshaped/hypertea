@@ -1,5 +1,5 @@
 import { afterEach, expect, test, vi } from "vitest";
-import { defineProgram, effectSignal, h, mountProgram, type ProgramHandle } from "./program.js";
+import { defineProgram, effectSignal, emptySubscription, h, mountProgram, type ProgramHandle } from "./program.js";
 
 const mounts: Array<ProgramHandle<number, { type: "done" }>> = [];
 afterEach(() => { mounts.splice(0).forEach(mount => { mount.stop(); }); document.body.replaceChildren(); vi.useRealTimers(); });
@@ -156,7 +156,7 @@ test("a stop inside a runner marks subsequent legacy runners inactive without sk
   expect(signals.map(signal => signal.aborted)).toEqual([true, true]);
 });
 
-test("false slots start and dispose independently without restarting later subscriptions", () => {
+test("emptySubscription slots start and dispose independently without restarting later subscriptions", () => {
   const firstDispose = vi.fn(); const laterDispose = vi.fn();
   const first = { key: "first", subscribe: vi.fn(() => firstDispose) };
   const later = { key: "later", subscribe: vi.fn(() => laterDispose) };
@@ -164,7 +164,7 @@ test("false slots start and dispose independently without restarting later subsc
     program: defineProgram<undefined, number, { type: "done" }, never>({
       init: () => [0, []], update: model => [model + 1, []],
       view: model => h("output", {}, String(model)),
-      subscriptions: model => [model % 2 === 1 && first, later],
+      subscriptions: model => [model % 2 === 1 ? first : emptySubscription("first:off"), later],
     }),
   });
   mounts.push(mounted);

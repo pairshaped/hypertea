@@ -32,9 +32,9 @@ with caller cancellation; resource APIs otherwise keep running. Late replies are
 ignored.
 
 Subscriptions are declared from model state as
-`ReadonlyArray<ProgramSubscription<Msg> | false>`. A `false` entry reserves an
-empty fixed slot. Switching to `false` disposes that slot; switching from it starts
-the subscription. Matching stays positional, so never remove an earlier array
+`ReadonlyArray<ProgramSubscription<Msg>>`. `emptySubscription(key)` reserves an
+empty fixed slot. Switching to it disposes that slot's subscription; switching from
+it starts the subscription, because the key changes at that position. Matching stays positional, so never remove an earlier array
 entry to disable it.
 The runtime preserves or replaces instances as state changes. Calls belong to the
 issuing instance, so replacing it rejects its pending calls.

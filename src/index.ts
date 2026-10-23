@@ -290,7 +290,7 @@ export type Program<
   subscriptions?: (
     model: Model,
     context: ProgramContext<Flags>,
-  ) => ReadonlyArray<ProgramSubscription<Msg> | false>;
+  ) => ReadonlyArray<ProgramSubscription<Msg>>;
 }>;
 
 export type ProgramHandle<Model, Msg extends ProgramMsg> = Readonly<{
@@ -305,7 +305,7 @@ type RuntimeBase<Model, Msg extends ProgramMsg, Effect extends ProgramEffect> = 
   init: () => Transition<Model, Effect>;
   update: (model: Model, message: Msg, origin: EffectOrigin | undefined) => Transition<Model, Effect>;
   view: (model: Model) => VNode<Model>;
-  subscriptions?: (model: Model) => ReadonlyArray<ProgramSubscription<Msg> | false>;
+  subscriptions?: (model: Model) => ReadonlyArray<ProgramSubscription<Msg>>;
   node: Element;
   nodeChanged?: (node: Element) => void;
 }>;
@@ -645,6 +645,11 @@ export function windowResized<Msg extends ProgramMsg>(
   };
 }
 
+/** Hold a subscription slot open without doing any work. Pass a distinct key per slot. */
+export function emptySubscription<Msg extends ProgramMsg>(key: string): ProgramSubscription<Msg> {
+  return { key, subscribe: () => () => undefined };
+}
+
 export function defineProgram<
   Flags,
   Model,
@@ -782,9 +787,9 @@ export function start<Model, Msg extends ProgramMsg, Effect extends ProgramEffec
   };
 
   const toSubscriptionTuple = (
-    subscription: ProgramSubscription<Msg> | false,
-  ): ProgramSubscriptionTuple<Model, Msg> | false => {
-    return subscription === false ? false : [runSubscriber, subscription];
+    subscription: ProgramSubscription<Msg>,
+  ): ProgramSubscriptionTuple<Model, Msg> => {
+    return [runSubscriber, subscription];
   };
 
   const init: Dispatchable<Model> = [state, ...effects.filter((effect): effect is Effect => !isReply(effect)).map(effect => toEffectTuple(effect))];

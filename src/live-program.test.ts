@@ -1,5 +1,5 @@
 import { expect, test, vi } from "vitest";
-import { defineProgram, h, type ProgramMsg } from "./program.js";
+import { defineProgram, emptySubscription, h, type ProgramMsg } from "./program.js";
 import { mountProgram } from "./testing.js";
 import { liveSubscription, type LiveTransport } from "./live.js";
 
@@ -23,13 +23,13 @@ test("fixed slots preserve a live stream and its captured options through Progra
       }, []],
       view: model => h("output", {}, String(model.count)),
       subscriptions: model => [
-        model.earlier && { key: "earlier", subscribe: () => firstDispose },
-        model.live && liveSubscription({
+        model.earlier ? { key: "earlier", subscribe: () => firstDispose } : emptySubscription("earlier:off"),
+        model.live ? liveSubscription({
           key: "feed", after: model.count, open,
           decode: () => ({ message: { type: model.count === 0 ? "done" : "wrong-closure" } }),
           connected: () => ({ type: "connected" }),
           retry: { initialMs: 1000, maxMs: 1000, resetOn: "open" },
-        }),
+        }) : emptySubscription("feed:off"),
       ],
     }),
   });
