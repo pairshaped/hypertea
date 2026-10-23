@@ -276,7 +276,9 @@ ownership, publication, and live-stream slots stable.
 ## Live subscriptions
 
 Import `liveSubscription`, `eventStream` and the types you need from
-`@pairshaped/hypertea/live`. The main entry does not import this module.
+`@pairshaped/hypertea/live`. The main entry does not import this module. Public types include `SseRecord`,
+`SseOptions`, `SseCursor`, `EventStreamOptions`, `LiveTransport`, `LiveHealth`,
+`LiveRetry` and `LiveOptions`. Use `LiveRetry` to name a shared retry policy.
 
 ```ts
 import { eventStream, liveSubscription, type SseRecord } from "@pairshaped/hypertea/live"
@@ -295,6 +297,11 @@ const feed = liveSubscription<SseRecord, string, Msg>({
   retry: { initialMs: 1000, maxMs: 30000, resetOn: "message" },
 })
 ```
+
+The SSE parser keeps the last valid `id` across records, so an id-less event in
+this example retains its cursor. An id-only block updates the next record without
+dispatching a message. An explicit empty `id:` clears it; a NUL-containing id
+leaves it unchanged.
 
 The key names the resource and any stable baseline, never the moving cursor.
 Options captured at first subscribe, including `after`, `decode` and callbacks,

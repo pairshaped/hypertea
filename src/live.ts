@@ -1,6 +1,8 @@
 import type { ProgramMsg, ProgramSubscription } from "./index.js";
 
+/** @public Part of the package boundary documented in README.md. */
 export type SseRecord = Readonly<{ id: string; event: string; data: string }>;
+/** @public Part of the package boundary documented in README.md. */
 export type SseOptions = Readonly<{
   maxEventBytes?: number;
   TextDecoder?: typeof TextDecoder;
@@ -15,7 +17,11 @@ export async function* readSse(
   const aborted = () => signal.aborted;
   const decoder = new (options.TextDecoder ?? TextDecoder)("utf-8", { fatal: true });
   const reader = stream.getReader();
-  const cancel = () => { void reader.cancel().catch(() => undefined); };
+  const release = async () => {
+    try { await reader.cancel(); } catch { /* Cancellation can fail after a read error. */ }
+    reader.releaseLock();
+  };
+  const cancel = () => { void release(); };
   signal.addEventListener("abort", cancel, { once: true });
   let bytes = 0;
   let pending = "";
@@ -32,7 +38,7 @@ export async function* readSse(
     pending = "";
     if (text === "") {
       const record = data.length === 0 ? undefined : { id, event: event || "message", data: data.join("\n") };
-      id = ""; event = ""; data = []; bytes = 0;
+      event = ""; data = []; bytes = 0;
       return record;
     }
     if (!text.startsWith(":")) {
@@ -86,19 +92,23 @@ export async function* readSse(
     }
   } finally {
     signal.removeEventListener("abort", cancel);
-    await reader.cancel().catch(() => undefined);
-    reader.releaseLock();
+    await release();
   }
 }
 
+/** @public Part of the package boundary documented in README.md. */
 export type LiveTransport<Record, Cursor> = (
   cursor: Cursor | undefined, signal: AbortSignal, opened: () => void,
 ) => AsyncIterable<Record>;
 
+/** @public Part of the package boundary documented in README.md. */
+export type SseCursor = Readonly<{ header: "Last-Event-ID" }> | Readonly<{ param: string }>;
+
+/** @public Part of the package boundary documented in README.md. */
 export type EventStreamOptions = SseOptions & Readonly<{
   url: string;
   headers?: HeadersInit;
-  cursor?: Readonly<{ header: "Last-Event-ID" }> | Readonly<{ param: string }>;
+  cursor?: SseCursor;
   credentials?: RequestCredentials;
   describeError?: (error: unknown, defaultText: string) => string;
   fetch?: typeof fetch;
@@ -153,8 +163,11 @@ function errorText(error: unknown): string {
   return error instanceof Error && error.message !== "" ? error.message : "The live stream failed without an error description";
 }
 
+/** @public Part of the package boundary documented in README.md. */
 export type LiveHealth = Readonly<{ kind: "healthy" }> | Readonly<{ kind: "problem"; text: string }>;
+/** @public Part of the package boundary documented in README.md. */
 export type LiveRetry = Readonly<{ initialMs: number; maxMs: number; factor?: number; resetOn: "open" | "message" }>;
+/** @public Part of the package boundary documented in README.md. */
 export type LiveOptions<Record, Cursor, Msg extends ProgramMsg> = Readonly<{
   key: string;
   open: LiveTransport<Record, Cursor>;

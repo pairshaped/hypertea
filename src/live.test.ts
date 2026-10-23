@@ -27,7 +27,7 @@ test("fragmented UTF-8 and CRLF preserve multiline data; incomplete records are 
 
 test("CR-only endings, empty data, ignored fields and NUL ids follow SSE field rules", async () => {
   expect(await collect(readSse(body([encode("id: good\rid: bad\0id\revent:\rretry: 1\runknown\rdata\r\rid: unused\r\rdata: next\r\r")]), new AbortController().signal)))
-    .toEqual([{ id: "good", event: "message", data: "" }, { id: "", event: "message", data: "next" }]);
+    .toEqual([{ id: "good", event: "message", data: "" }, { id: "unused", event: "message", data: "next" }]);
 });
 
 test("invalid UTF-8, including a truncated final code point, fails", async () => {
@@ -407,4 +407,24 @@ test("omitting a decoded cursor keeps it, and a caller can choose a retry factor
   await vi.advanceTimersByTimeAsync(29); expect(cursors).toHaveLength(2);
   await vi.advanceTimersByTimeAsync(1); expect(cursors).toEqual(["initial", "initial", "initial"]);
   dispose(); vi.useRealTimers();
+});
+
+test("SSE ids persist across id-less events and id-only blocks, clear explicitly, and ignore NUL", async () => {
+  const records = await collect(readSse(body([encode("id: first\ndata: one\n\ndata: two\n\nid: next\n\ndata: three\n\nid: invalid\0id\ndata: four\n\nid:\ndata: five\n\ndata: six\n\n")]), new AbortController().signal));
+  expect(records).toEqual([
+    { id: "first", event: "message", data: "one" }, { id: "first", event: "message", data: "two" },
+    { id: "next", event: "message", data: "three" }, { id: "next", event: "message", data: "four" },
+    { id: "", event: "message", data: "five" }, { id: "", event: "message", data: "six" },
+  ]);
+});
+
+test("abort releases the reader lock even while the generator is paused at yield", async () => {
+  const canceled = vi.fn();
+  const stream = new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(encode("data: one\n\ndata: two\n\n")); }, cancel: canceled });
+  const controller = new AbortController();
+  const records = readSse(stream, controller.signal);
+  expect((await records.next()).value).toMatchObject({ data: "one" });
+  controller.abort(); await flush();
+  expect(canceled).toHaveBeenCalledTimes(1); expect(stream.locked).toBe(false);
+  expect((await records.next()).done).toBe(true);
 });

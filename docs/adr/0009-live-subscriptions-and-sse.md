@@ -56,6 +56,11 @@ The transport uses streaming fetch to support headers, credentials, failure
 classification and a record size cap. Fetch owns one attempt; the core owns
 reconnect timing. Server `retry:` fields do not change that timing.
 
+SSE records retain the last valid id across dispatches, including an id set in a
+block without data. An explicit empty `id:` clears it, and an id containing NUL
+leaves it unchanged. A decoder that uses `record.id` as its cursor therefore keeps
+its position when the next event omits an id.
+
 A cursor can use `Last-Event-ID` or a caller-named query parameter. The latter
 avoids a custom header for cross-origin streams. Without caller headers the only
 header is `Accept: text/event-stream`. Requests use `cache: "no-store"` and
