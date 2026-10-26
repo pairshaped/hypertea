@@ -43,10 +43,6 @@ type CounterState = {
   readonly customValue?: unknown;
 };
 
-type RuntimeNode = Node & {
-  events?: Readonly<Record<string, unknown>>;
-};
-
 const initialState: CounterState = {
   count: 0,
   label: "start",
@@ -1525,7 +1521,6 @@ describe("app", () => {
     button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
 
     expect(clicked).toEqual(["click"]);
-    expect((button as RuntimeNode).events?.click).toBeUndefined();
   });
 
   test("handles DOM patch edge cases", async () => {
@@ -1573,8 +1568,6 @@ describe("app", () => {
     expect(panel.style.color).toBe("blue");
     expect(input.value).toBe("start");
 
-    button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    (button as RuntimeNode).events = {};
     button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     dispatch({ ...initialState, enabled: false });
     await flushRender();

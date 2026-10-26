@@ -1,6 +1,7 @@
 const elementNodeType = 1;
 const textNodeType = 3;
 const recycledElements = new WeakSet<object>();
+const eventHandlersKey = Symbol("hypertea.eventHandlers");
 const svgNamespace = "http://www.w3.org/2000/svg";
 
 const emptyObject = Object.freeze({}) as Record<PropertyKey, never>;
@@ -15,7 +16,7 @@ export type MemoView<State, Data extends Indexable = Indexable> = (
   data: Data,
 ) => VNode<State>;
 type RuntimeNode = Node & {
-  events?: Partial<Record<string, unknown>>;
+  [eventHandlersKey]?: Partial<Record<string, unknown>>;
 };
 type PatchableElement = Element & {
   [key: string]: unknown;
@@ -969,7 +970,7 @@ function createApp<State>({
   };
 
   const listener = function listener(this: RuntimeNode, event: Event) {
-    const dispatchable = this.events?.[event.type];
+    const dispatchable = this[eventHandlersKey]?.[event.type];
 
     if (dispatchable !== undefined) {
       managedDispatch(dispatchable as Dispatchable<State>, event);
@@ -1463,8 +1464,8 @@ function patchEvent(
   newValue: unknown,
   listener: EventListener,
 ): void {
-  node.events = {
-    ...(node.events ?? {}),
+  node[eventHandlersKey] = {
+    ...(node[eventHandlersKey] ?? {}),
     [eventName]: newValue,
   };
 
