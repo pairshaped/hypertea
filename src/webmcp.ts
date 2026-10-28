@@ -291,7 +291,7 @@ export function exposeMessages<Msg extends ProgramMsg>(
   if (new Set(messages.map((entry) => entry.message)).size !== messages.length) throw new Error("Duplicate WebMCP message declaration");
   if (messages.length !== Object.keys(schemas).length) throw new Error("Stale WebMCP schemas: regenerate the message declarations");
   return messages.map(({ message: name, ...metadata }) => {
-    const inputSchema = Object.hasOwn(schemas, name) ? schemas[name] : undefined;
+    const inputSchema = Object.prototype.hasOwnProperty.call(schemas, name) ? schemas[name] : undefined;
     if (inputSchema === undefined) throw new Error(`Missing WebMCP declaration or schema: ${name}`);
     return defineWebMCPTool({
       ...metadata, name, inputSchema,
@@ -332,10 +332,10 @@ function matchesInput(schema: WebMCPInputSchema, input: unknown): boolean {
       if (prototype !== Object.prototype && prototype !== null) return false;
       if (Object.getOwnPropertySymbols(input).length !== 0) return false;
       const record = input as Record<string, unknown>;
-      return schema.required.every((key) => Object.hasOwn(record, key))
+      return schema.required.every((key) => Object.prototype.hasOwnProperty.call(record, key))
         && Object.keys(record).every((key) => {
           const descriptor = Object.getOwnPropertyDescriptor(record, key);
-          if (!Object.hasOwn(schema.properties, key) || descriptor === undefined || !("value" in descriptor)) return false;
+          if (!Object.prototype.hasOwnProperty.call(schema.properties, key) || descriptor === undefined || !("value" in descriptor)) return false;
           // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- Own-key check establishes the schema property.
           return matchesInput(schema.properties[key]!, descriptor.value);
         });
@@ -354,7 +354,7 @@ function readJsonData(input: unknown, ancestors: Set<object>): WebMCPValue | und
     if (array ? prototype !== Array.prototype : prototype !== Object.prototype && prototype !== null) return undefined;
     const descriptors = Object.getOwnPropertyDescriptors(input);
     if (Reflect.ownKeys(descriptors).some(key => typeof key !== "string")) return undefined;
-    if (!Object.hasOwn(descriptors, "toJSON") && (Object.getOwnPropertyDescriptor(Object.prototype, "toJSON") !== undefined
+    if (!Object.prototype.hasOwnProperty.call(descriptors, "toJSON") && (Object.getOwnPropertyDescriptor(Object.prototype, "toJSON") !== undefined
       || (array && Object.getOwnPropertyDescriptor(Array.prototype, "toJSON") !== undefined))) return undefined;
     ancestors.add(input);
     try {

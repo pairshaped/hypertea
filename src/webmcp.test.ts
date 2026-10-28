@@ -1043,3 +1043,26 @@ test("independent modules recognize canonical invocation errors without trusting
     expect(isWebMCPInvocationError(value)).toBe(false);
   }
 });
+
+test("message tools validate without Object.hasOwn", () => {
+  const descriptor = required(Object.getOwnPropertyDescriptor(Object, "hasOwn"));
+  let message: unknown;
+  const refused: Array<boolean> = [];
+  Reflect.deleteProperty(Object, "hasOwn");
+  try {
+    const declarations = exposeMessages<{ type: "add"; amount: number }>([
+      { message: "add", description: "Add" },
+    ], {
+      add: { type: "object", properties: { amount: { type: "number" } }, required: ["amount"], additionalProperties: false },
+    });
+    const tool = required(declarations[0]);
+    message = tool.toMessage({ amount: 3 });
+    for (const input of [Object.create({ amount: 3 }), { amount: 3, unexpected: true }]) {
+      try { tool.toMessage(input); refused.push(false); } catch { refused.push(true); }
+    }
+  } finally {
+    Object.defineProperty(Object, "hasOwn", descriptor);
+  }
+  expect(message).toEqual({ type: "add", amount: 3 });
+  expect(refused).toEqual([true, true]);
+});
