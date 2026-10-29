@@ -58,6 +58,14 @@ continuations. It does not roll back already-sent work. The first reply wins;
 duplicate terminal dispatches are ignored. A chain that ends without a reply rejects with
 `unknown`. Runners must return promises that settle after their last dispatch.
 
+Every admitted invocation has a 120-second deadline, shared by native,
+fallback and scoped callers. Expiry aborts the Program call, retires its
+continuations and rejects with outcome `unknown` and reason `timeout`.
+The deadline covers waiting for effects, including a response body that never
+finishes. It cannot interrupt synchronous JavaScript or undo an external
+effect. Callers retain the unknown outcome and must not retry writes
+automatically. Completion, rejection and cancellation clear the deadline.
+
 Each subscription publishes the same execution callbacks through native
 `document.modelContext` when present and a page-level JavaScript interface,
 `window.hyperteaAgent`, with an inert JSON catalog. No application transport

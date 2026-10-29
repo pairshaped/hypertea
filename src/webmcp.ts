@@ -22,14 +22,15 @@ export function isWebMCPInvocationError(value: unknown): value is WebMCPInvocati
 }
 
 export class WebMCPInvocationError extends Error {
-  readonly reason: "invalid-input" | "unknown-tool" | undefined;
+  readonly reason: "invalid-input" | "unknown-tool" | "timeout" | undefined;
 
-  constructor(readonly outcome: "cancelled-before-dispatch" | "unknown", reason?: "invalid-input" | "unknown-tool") {
+  constructor(readonly outcome: "cancelled-before-dispatch" | "unknown", reason?: "invalid-input" | "unknown-tool" | "timeout") {
     super(outcome === "unknown"
-      ? "WebMCP stopped waiting after dispatch; the application outcome is unknown"
+      ? reason === "timeout" ? "WebMCP tool timed out after 120 seconds; the application outcome is unknown"
+        : "WebMCP stopped waiting after dispatch; the application outcome is unknown"
       : reason === "invalid-input" ? "Invalid input for WebMCP tool"
       : reason === "unknown-tool" ? "Unknown WebMCP tool" : "WebMCP invocation cancelled before dispatch");
-    this.reason = outcome === "cancelled-before-dispatch" ? reason : undefined;
+    this.reason = outcome === "cancelled-before-dispatch" || reason === "timeout" ? reason : undefined;
     this.name = "WebMCPInvocationError";
     invocationErrors.add(this);
   }
@@ -441,16 +442,18 @@ export function createWebMCP<Msg extends ProgramMsg>(options: Readonly<{
                 const refusal = admitToolCall(page, metadata, caller);
                 if (refusal !== undefined) return refusal;
                 if (cancelled()) throw new WebMCPInvocationError("cancelled-before-dispatch");
+                const deadline = new AbortController();
+                const timer = globalThis.setTimeout(() => { deadline.abort(); }, 120_000);
                 try {
                   return await context.call(message, {
                     origin,
                     ...(caller === undefined ? {} : { caller }),
-                    signal: AbortSignal.any(signal === undefined ? [registration.signal] : [registration.signal, signal]),
+                    signal: AbortSignal.any(signal === undefined ? [registration.signal, deadline.signal] : [registration.signal, deadline.signal, signal]),
                   });
                 } catch (error) {
                   throw new WebMCPInvocationError(error instanceof Error && "outcome" in error && error.outcome === "cancelled-before-dispatch"
-                    ? "cancelled-before-dispatch" : "unknown");
-                }
+                    ? "cancelled-before-dispatch" : "unknown", deadline.signal.aborted ? "timeout" : undefined);
+                } finally { globalThis.clearTimeout(timer); }
               },
             };
           });

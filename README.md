@@ -23,6 +23,12 @@ declared browser tools to ordinary program messages and completion effects.
 `src/index.ts`, `src/program.ts`, `src/testing.ts`, and `src/webmcp.ts` own those
 interfaces. Benchmark and test internals are not public API.
 
+WebMCP invocations stop waiting after 120 seconds and reject with
+`WebMCPInvocationError`, outcome `unknown` and reason `timeout`. The invocation
+is retired, so late completion messages cannot change the Program. A timeout
+does not roll back a request already sent; callers must report the uncertainty
+and must not replay a write automatically.
+
 ## Status
 
 The runtime exposes:

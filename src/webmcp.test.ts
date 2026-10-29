@@ -62,6 +62,25 @@ test("tool origin follows asynchronous effects without marking intervening human
   }
 });
 
+test.each(["native", "fallback", "builtin"] as const)("%s tool timeout retires a hung invocation and its late completion", async transport => {
+  const native = installBrowser();
+  vi.useFakeTimers({toFake: ["setTimeout", "clearTimeout"]});
+  const {mounted, saves} = mountAsyncCounter();
+  await mounted.settle();
+  const caller = createWebMCPCaller(document); stops.push(caller.stop);
+  let outcome: unknown;
+  const pending = transport === "native" ? required(native.get("save")).execute({amount: 4})
+    : transport === "fallback" ? required(window.hyperteaAgent).executeTool("save", {amount: 4})
+    : caller.capture().executeTool("save", {amount: 4});
+  void pending.catch((error: unknown) => { outcome = error; });
+  await vi.advanceTimersByTimeAsync(120_000);
+  expect(outcome).toMatchObject({outcome: "unknown", reason: "timeout", message: "WebMCP tool timed out after 120 seconds; the application outcome is unknown"});
+  const save = required(saves[0]);
+  expect(effectInvocation(save.dispatch)?.isLive()).toBe(false);
+  save.dispatch({...save.effect, type: "saved", status: "applied"});
+  expect(mounted.model().count).toBe(0);
+});
+
 describe("native registration declaration", () => {
   type Msg = Readonly<{ type: "ping" | "failed" }>;
   const declare = (content?: string) => {
