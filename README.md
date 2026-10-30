@@ -646,3 +646,7 @@ at `document[Symbol.for("hypertea.page-state.reader.v1")]`, then listen for
 Retained readers stay valid after the final owner stops and a new one registers.
 The decision helper belongs on the lazy human surface. It starts a plain target
 subscription chain; never forward through an effect's attributed dispatch.
+
+Use `anySignal(signals)` from `@pairshaped/hypertea/program` to combine effect
+lifetimes. It preserves the first cancellation reason and removes its listeners
+when cancelled, including on Safari 16 where `AbortSignal.any` is unavailable.

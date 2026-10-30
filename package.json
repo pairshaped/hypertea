@@ -51,7 +51,7 @@
     "preinstall": "node -e 'const agent=process.env.npm_config_user_agent??\"\";if(!agent.startsWith(\"pnpm/\")){console.error(\"error: use pnpm for this repository\");process.exit(1)}'",
     "bench": "pnpm run build && node benchmark/dom-patching.mjs",
     "build": "tsc -p tsconfig.build.json",
-    "check": "pnpm run typecheck && pnpm run lint && pnpm run test:coverage && pnpm run build && pnpm run check:webmcp-example && pnpm run test:fragment-roots",
+    "check": "node --test src/abort.test-node.mjs && pnpm run typecheck && pnpm run lint && pnpm run test:coverage && pnpm run build && pnpm run check:webmcp-example && pnpm run test:fragment-roots",
     "lint": "eslint .",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",

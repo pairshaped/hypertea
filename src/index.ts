@@ -1,3 +1,4 @@
+export { anySignal } from "./abort.js";
 const elementNodeType = 1;
 const textNodeType = 3;
 const recycledElements = new WeakSet<object>();

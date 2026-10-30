@@ -1,3 +1,4 @@
+import { anySignal } from "./abort.js";
 import type { EffectOrigin, ProgramMsg, ProgramSubscription } from "./program.js";
 
 export type WebMCPValue =
@@ -166,7 +167,7 @@ export function createWebMCPCaller(page: Document) {
   const caller = {
     handle,
     captureReady: async (options?: Readonly<{signal: AbortSignal}>): Promise<WebMCPAgent> => {
-      const signal = AbortSignal.any(options === undefined ? [lifetime.signal] : [lifetime.signal, options.signal]);
+      const signal = anySignal(options === undefined ? [lifetime.signal] : [lifetime.signal, options.signal]);
       if (signal.aborted || (page as AgentDocument)[registrationFailedKey] === true) throw new WebMCPInvocationError("cancelled-before-dispatch");
       const publication = (page as AgentDocument)[publicationKey];
       const entries = new Map(publication?.entries);
@@ -199,7 +200,7 @@ export function createWebMCPCaller(page: Document) {
             throw new WebMCPInvocationError("cancelled-before-dispatch");
           }
           if (entry === undefined) throw new WebMCPInvocationError("cancelled-before-dispatch", "unknown-tool");
-          const signal = AbortSignal.any(options === undefined ? [lifetime.signal] : [lifetime.signal, options.signal]);
+          const signal = anySignal(options === undefined ? [lifetime.signal] : [lifetime.signal, options.signal]);
           return entry.tool.execute(input, { signal }, "fallback", handle);
         },
       };
@@ -448,7 +449,7 @@ export function createWebMCP<Msg extends ProgramMsg>(options: Readonly<{
                   return await context.call(message, {
                     origin,
                     ...(caller === undefined ? {} : { caller }),
-                    signal: AbortSignal.any(signal === undefined ? [registration.signal, deadline.signal] : [registration.signal, deadline.signal, signal]),
+                    signal: anySignal(signal === undefined ? [registration.signal, deadline.signal] : [registration.signal, deadline.signal, signal]),
                   });
                 } catch (error) {
                   throw new WebMCPInvocationError(error instanceof Error && "outcome" in error && error.outcome === "cancelled-before-dispatch"

@@ -1,3 +1,4 @@
+export { anySignal } from "./abort.js";
 /** @public Part of the package boundary documented in README.md. */
 export {
   assertNever,
