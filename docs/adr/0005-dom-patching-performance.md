@@ -22,6 +22,20 @@ The runtime should use head and tail scans before allocating keyed lookup struct
 
 For keyed middle patches, Hypertea should use the same head-walking shape as Hyperapp: track keyed old children, walk the old and new middle once, move known keyed DOM nodes into place, and remove stale keyed nodes after the walk. This keeps reverse and move-heavy keyed updates in Hyperapp's neighbourhood without adding public API or framework machinery.
 
+## VNode ownership
+
+Each mounted VNode occurrence owns its DOM node and mutable child slots. A view
+may place one VNode value in several positions. When an incoming VNode already
+belongs to another mounted occurrence, the patcher copies it and its child array
+before mounting or patching that position. Descendants acquire their own copies
+as the patcher visits them. Props remain shared because patching does not mutate
+them. Reusing the VNode at its existing occurrence keeps the identity fast path,
+including memoized views and keyed moves.
+
+Views should build separate VNodes for separate desktop and mobile projections.
+Runtime ownership also protects callers that reuse a subtree. It does not repair
+DOM changes made outside Hypertea, such as browser extensions moving text nodes.
+
 ## Conditional children and hydration
 
 Absent children (`undefined`, `null`, `false` and `true`) occupy empty text

@@ -882,6 +882,46 @@ describe("TEA island runtime", () => {
 });
 
 describe("app", () => {
+  test.each([false, true])("updates independently mounted shared subtrees (memo: %s)", async (memoized) => {
+    const mount = appendMount("<div></div>");
+    const cached = h<number>("span", {}, h("i", {}, "cached"));
+    const dispatch = app<number>({
+      init: 0,
+      node: mount,
+      view: step => {
+        const shared = h<number>("span", {}, `name ${String(step)}`, step % 2 === 1 ? h("b", {}, "cancelled") : undefined);
+        const child = () => memoized ? memo(() => shared, { step }) : shared;
+        return h("div", {}, h("section", {}, child(), cached), h("aside", {}, child(), cached));
+      },
+    });
+    await flushRender();
+    const sections = Array.from(mount.querySelectorAll("section, aside"));
+    expect(sections.map(node => node.textContent)).toEqual(["name 0cached", "name 0cached"]);
+    for (const [step, expected] of [[1, "name 1cancelledcached"], [2, "name 2cached"], [3, "name 3cancelledcached"]] as const) {
+      dispatch(() => step);
+      await flushRender();
+      expect(sections.map(node => node.textContent)).toEqual([expected, expected]);
+    }
+  });
+
+  test("updates a shared root independently across application mounts", async () => {
+    const first = document.createElement("div");
+    const second = document.createElement("div");
+    document.body.append(first, second);
+    const shared = h<number>("div", {}, h("span", {}, "original"));
+    const view = (step: number) => step === 0 ? shared : h<number>("div", {}, h("strong", {}, "updated"));
+    const firstDispatch = app({ init: 0, node: first, view });
+    const secondDispatch = app({ init: 0, node: second, view });
+    await flushRender();
+    secondDispatch(() => 1);
+    await flushRender();
+    expect(first.innerHTML).toBe("<span>original</span>");
+    expect(second.innerHTML).toBe("<strong>updated</strong>");
+    firstDispatch(() => 1);
+    await flushRender();
+    expect(first.innerHTML).toBe("<strong>updated</strong>");
+  });
+
   test("hydrates innerHTML after retiring recycled server children and updates it", async () => {
     const mount = appendMount('<div><p>Server</p><a href="/old">Old</a></div>');
     const dispatch = app<number>({

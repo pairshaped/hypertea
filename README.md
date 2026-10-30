@@ -61,6 +61,7 @@ without adding a DOM element. Child fragments may be nested, conditionally
 inserted, updated and removed. Helpers may return fragments for use as children.
 
 Each Program or memoized view must return one root VNode. Wrap a root fragment in an element.
+A VNode can appear in more than one position. Hypertea gives each mounted occurrence its own DOM pointer and child slots, while retaining identity reuse at the same position.
 Direct fragment-array returns fail TypeScript. JSX shorthand needs the additional
 build check because TypeScript types every JSX expression as `JSX.Element`.
 Run this from the Hypertea package directory:

@@ -1004,7 +1004,7 @@ function createApp<State>({
             const parent = node.parentNode;
 
             if (parent !== null) {
-              const nextVNode = view(state);
+              const nextVNode = claimVNode(view(state), vdom);
               node = patch(
                 parent,
                 node,
@@ -1500,7 +1500,7 @@ function createNode<State>(
     }
 
     for (let index = 0; index < vdom.children.length; index += 1) {
-      const child = maybeVNode(vdom.children[index]);
+      const child = claimVNode(vdom.children[index]);
       vdom.children[index] = child;
       node.appendChild(createNode(child, listener, nextSvg));
     }
@@ -1535,7 +1535,7 @@ function patch<State>(
   listener: EventListener,
   isSvg: boolean,
 ): Node {
-  const normalizedNewVNode = maybeVNode(newVNode, oldVNode);
+  const normalizedNewVNode = claimVNode(newVNode, oldVNode);
 
   if (oldVNode === normalizedNewVNode) {
     return node;
@@ -1696,7 +1696,7 @@ function hydrateChildren<State>(
   let newTail = newChildren.length - 1;
   while (oldTail >= 0 && newTail >= 0) {
     const oldChild = oldChildren[oldTail] as VNode<State>;
-    const newChild = maybeVNode(newChildren[newTail], oldChild);
+    const newChild = claimVNode(newChildren[newTail], oldChild);
     newChildren[newTail] = newChild;
     if (oldChild.type !== elementNodeType || newChild.type !== elementNodeType || oldChild.tag !== newChild.tag) {
       break;
@@ -1709,7 +1709,7 @@ function hydrateChildren<State>(
   let oldIndex = 0;
   for (let index = 0; index <= newTail; index += 1) {
     const oldChild = oldIndex <= oldTail ? oldChildren[oldIndex] as VNode<State> : undefined;
-    const newChild = maybeVNode(newChildren[index], oldChild);
+    const newChild = claimVNode(newChildren[index], oldChild);
     newChildren[index] = newChild;
     if (
       newChild.type === textNodeType && newChild.tag === "" &&
@@ -1836,7 +1836,7 @@ function patchMatchedChild<State>(
   listener: EventListener,
   isSvg: boolean,
 ): VNode<State> {
-  const normalizedNewChild = maybeVNode(newChild, oldChild);
+  const normalizedNewChild = claimVNode(newChild, oldChild);
   patch(
     parent,
     mountedVNode(oldChild).node,
@@ -1860,7 +1860,7 @@ function insertNewChildren<State>(
   const anchor = getNode(oldChildren[newHead]);
 
   while (newHead <= newTail) {
-    const child = maybeVNode(newChildren[newHead]);
+    const child = claimVNode(newChildren[newHead]);
     newChildren[newHead] = child;
     parent.insertBefore(createNode(child, listener, isSvg), anchor);
     newHead += 1;
@@ -1877,7 +1877,7 @@ function insertNewChildrenBefore<State>(
   isSvg: boolean,
 ): void {
   while (newHead <= newTail) {
-    const child = maybeVNode(newChildren[newHead]);
+    const child = claimVNode(newChildren[newHead]);
     newChildren[newHead] = child;
     parent.insertBefore(createNode(child, listener, isSvg), anchor);
     newHead += 1;
@@ -1925,7 +1925,7 @@ function patchUnkeyedMiddle<State>(
 ): void {
   while (oldHead <= oldTail && newHead <= newTail) {
     const oldChild = maybeVNode(oldChildren[oldHead]);
-    const newChild = maybeVNode(newChildren[newHead], oldChild);
+    const newChild = claimVNode(newChildren[newHead], oldChild);
     newChildren[newHead] = newChild;
     oldChildren[oldHead] = oldChild;
     patch(
@@ -1983,7 +1983,7 @@ function patchKeyedMiddle<State>(
 
     const oldChild = maybeVNode(oldChildren[oldHead]);
     const oldKey = oldChild.key;
-    const newChild = maybeVNode(newChildren[newHead], oldChild);
+    const newChild = claimVNode(newChildren[newHead], oldChild);
     const newKey = newChild.key;
     oldChildren[oldHead] = oldChild;
     newChildren[newHead] = newChild;
@@ -2114,6 +2114,16 @@ function memoDataChanged(a: Indexable, b: Indexable): boolean {
   }
 
   return recordsChanged(a, b);
+}
+
+// Each mounted occurrence owns its DOM pointer and mutable child slots. Clone
+// only when a view reuses a mounted VNode outside its existing occurrence.
+function claimVNode<State>(newVNode: MaybeVNode<State>, oldVNode?: VNode<State>): VNode<State> {
+  const vnode = maybeVNode(newVNode, oldVNode);
+  if (vnode.node === undefined || vnode === oldVNode) return vnode;
+  return vnode.type === textNodeType
+    ? { ...vnode, node: undefined }
+    : { ...vnode, node: undefined, children: [...vnode.children] };
 }
 
 function maybeVNode<State>(
