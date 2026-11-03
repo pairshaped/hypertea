@@ -386,7 +386,7 @@ function readJsonData(input: unknown, ancestors: Set<object>): WebMCPValue | und
 }
 
 export type WebMCPBridge<Msg extends ProgramMsg> = Readonly<{
-  subscription: (tools: ReadonlyArray<WebMCPTool<Msg>>) => ProgramSubscription<Msg>;
+  subscription: (tools: ReadonlyArray<WebMCPTool<Msg>>,options?:Readonly<{nativeRegistration?:boolean}>) => ProgramSubscription<Msg>;
 }>;
 
 let nextBridge = 0;
@@ -398,18 +398,19 @@ export function createWebMCP<Msg extends ProgramMsg>(options: Readonly<{
   let subscribed = false;
 
   return {
-    subscription: (tools) => {
+    subscription: (tools,{nativeRegistration=true}={}) => {
       // The tools reference is part of the subscription payload. A changed
       // declaration set must restart registration, even with the same key.
       const subscription = {
         key,
         tools,
+        nativeRegistration,
         subscribe: (dispatch, context) => {
           const page = typeof document === "undefined" ? undefined : document;
           if (page === undefined) return () => {
             // Server-side use has no document to publish tools into.
           };
-          const modelContext = nativeRegistrationMode(page) === "full"
+          const modelContext = nativeRegistration && nativeRegistrationMode(page) === "full"
             ? (page as Document & { modelContext?: ModelContext; }).modelContext : undefined;
           if (subscribed) throw new Error("Create one WebMCP bridge per mounted program");
           subscribed = true;
@@ -472,7 +473,7 @@ export function createWebMCP<Msg extends ProgramMsg>(options: Readonly<{
           });
           return unsubscribe;
         },
-      } satisfies ProgramSubscription<Msg> & { tools: ReadonlyArray<WebMCPTool<Msg>>; };
+      } satisfies ProgramSubscription<Msg> & { tools: ReadonlyArray<WebMCPTool<Msg>>; nativeRegistration:boolean; };
       return subscription;
     },
   };

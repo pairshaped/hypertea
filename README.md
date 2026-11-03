@@ -515,6 +515,12 @@ Register once with `bridge.subscription(mcpTools)`. Hypertea publishes both:
   `script#hypertea-agent-tools[type="application/json"]`, in every browser
   running the program.
 
+Pass `bridge.subscription(mcpTools, { nativeRegistration: false })` when the
+application's server policy permits only fallback publication. This keeps the full
+fallback catalog available. Passing `true` cannot widen a document declared
+`restricted`; both policies must permit native registration. Omit the option to
+use the document policy alone.
+
 No URL parameter or mode switch is needed. Both interfaces use the same
 validation, messages, effects and completion handling. An agent with permission
 to execute page JavaScript can discover and invoke the tools:
