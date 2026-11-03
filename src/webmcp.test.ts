@@ -91,7 +91,7 @@ describe("native registration declaration", () => {
     meta.content = content;
     document.head.append(meta);
   };
-  async function mountTool(name: string, onRegistrationError: () => Msg = () => ({ type: "failed" })) {
+  async function mountTool(name: string, onRegistrationError: () => Msg = () => ({ type: "failed" }), nativeRegistration?:boolean) {
     const bridge = createWebMCP<Msg>({ onRegistrationError });
     const tools = [defineWebMCPTool({ name, description: name, inputSchema: { type: "object" },
       parseInput: () => undefined, toMessage: (): Msg => ({ type: "ping" }) })];
@@ -99,7 +99,7 @@ describe("native registration declaration", () => {
     document.body.append(node);
     const program = defineProgram<undefined, number, Msg, Msg>({
       init: () => [0, []], update: model => [model, []], view: model => h("output", {}, model),
-      subscriptions: () => [bridge.subscription(tools)],
+      subscriptions: () => [bridge.subscription(tools,nativeRegistration===undefined?{}:{nativeRegistration})],
     });
     const mounted = mountProgram({ node, flags: undefined, program, runEffect: async () => { /* no effects */ } });
     stops.push(mounted.stop);
@@ -118,6 +118,18 @@ describe("native registration declaration", () => {
     await mountTool("alpha");
     expect([...native.keys()]).toEqual([]);
     expect(published()).toEqual(["alpha"]);
+  });
+
+  test("per-subscription restriction keeps fallback tools without native registration",async()=>{
+    const native=installBrowser();declare("full");
+    await mountTool("alpha",undefined,false);
+    expect([...native.keys()]).toEqual([]);expect(published()).toEqual(["alpha"]);
+  });
+
+  test("per-subscription native allowance cannot widen a restricted document",async()=>{
+    const native=installBrowser();declare("restricted");
+    await mountTool("alpha",undefined,true);
+    expect([...native.keys()]).toEqual([]);expect(published()).toEqual(["alpha"]);
   });
 
   test("full and an absent declaration register natively once", async () => {
