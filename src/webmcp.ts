@@ -110,7 +110,7 @@ declare const callerBrand: unique symbol;
 export type WebMCPCallerHandle = Readonly<{ [callerBrand]: true }>;
 type AgentDocument = Document & {
   [publicationKey]?: AgentPublication;
-  [registrationFailedKey]?: boolean;
+  [registrationFailedKey]?: Set<object>;
   [observersKey]?: Set<WebMCPCallObserver>;
   [nativeModeKey]?: NativeRegistrationMode;
 };
@@ -168,7 +168,7 @@ export function createWebMCPCaller(page: Document) {
     handle,
     captureReady: async (options?: Readonly<{signal: AbortSignal}>): Promise<WebMCPAgent> => {
       const signal = anySignal(options === undefined ? [lifetime.signal] : [lifetime.signal, options.signal]);
-      if (signal.aborted || (page as AgentDocument)[registrationFailedKey] === true) throw new WebMCPInvocationError("cancelled-before-dispatch");
+      if (signal.aborted || ((page as AgentDocument)[registrationFailedKey]?.size ?? 0) > 0) throw new WebMCPInvocationError("cancelled-before-dispatch");
       const publication = (page as AgentDocument)[publicationKey];
       const entries = new Map(publication?.entries);
       const ready = await new Promise<Array<boolean>>(resolve => {
@@ -177,7 +177,7 @@ export function createWebMCPCaller(page: Document) {
         signal.addEventListener("abort", aborted, {once: true});
         void Promise.all([...entries.values()].map(entry => entry.ready)).then(finish);
       });
-      if (lifetime.signal.aborted || (page as AgentDocument)[registrationFailedKey] === true || publication === undefined || (page as AgentDocument)[publicationKey] !== publication
+      if (lifetime.signal.aborted || ((page as AgentDocument)[registrationFailedKey]?.size ?? 0) > 0 || publication === undefined || (page as AgentDocument)[publicationKey] !== publication
         || ready.some(value => !value) || publication.entries.size !== entries.size
         || [...entries].some(([name, entry]) => publication.entries.get(name) !== entry)) {
         throw new WebMCPInvocationError("cancelled-before-dispatch");
@@ -397,6 +397,7 @@ export function createWebMCP<Msg extends ProgramMsg>(options: Readonly<{
   const key = `webmcp:${String(++nextBridge)}`;
   let subscribed = false;
 
+
   return {
     subscription: (tools,{nativeRegistration=true}={}) => {
       // The tools reference is part of the subscription payload. A changed
@@ -414,6 +415,13 @@ export function createWebMCP<Msg extends ProgramMsg>(options: Readonly<{
             ? (page as Document & { modelContext?: ModelContext; }).modelContext : undefined;
           if (subscribed) throw new Error("Create one WebMCP bridge per mounted program");
           subscribed = true;
+          const registrationIdentity=Object.freeze({});
+          const clearFailure=(scope:AgentDocument)=>{
+            const failures=scope[registrationFailedKey];
+            if(failures===undefined)return;
+            failures.delete(registrationIdentity);
+            if(failures.size===0)Reflect.deleteProperty(scope,registrationFailedKey);
+          };
           const registration = new AbortController();
           let finishRegistration!: (ready: boolean) => void;
           const ready = new Promise<boolean>(resolve => { finishRegistration = resolve; });
@@ -464,14 +472,17 @@ export function createWebMCP<Msg extends ProgramMsg>(options: Readonly<{
             await Promise.all(registered.map(async (tool) => {
               await modelContext?.registerTool(tool, { signal: registration.signal });
             }));
+            clearFailure(page);
             finishRegistration(true);
           })().catch((error: unknown) => {
             if (!active) return;
-            (page as AgentDocument)[registrationFailedKey] = true;
+            const scope=page as AgentDocument;
+            const failures=scope[registrationFailedKey]??new Set<object>();
+            failures.add(registrationIdentity);scope[registrationFailedKey]=failures;
             unsubscribe();
             dispatch(options.onRegistrationError(error));
           });
-          return unsubscribe;
+          return ()=>{unsubscribe();clearFailure(page);};
         },
       } satisfies ProgramSubscription<Msg> & { tools: ReadonlyArray<WebMCPTool<Msg>>; nativeRegistration:boolean; };
       return subscription;
