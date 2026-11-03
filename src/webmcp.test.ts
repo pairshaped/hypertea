@@ -1097,3 +1097,52 @@ test("message tools validate without Object.hasOwn", () => {
   expect(message).toEqual({ type: "add", amount: 3 });
   expect(refused).toEqual([true, true]);
 });
+
+test("a fresh built-in ready capture recovers after native failure falls back",async()=>{
+  const native=installBrowser(()=>Promise.reject(Error("Native registration refused")));
+  type Msg={type:"read"}|{type:"failed"};
+  const bridge=createWebMCP<Msg>({onRegistrationError:()=>({type:"failed"})});
+  const tools=[defineWebMCPTool({name:"recover",description:"Read",inputSchema:{type:"object"},parseInput:()=>undefined,toMessage:():Msg=>({type:"read"})})];
+  const node=document.createElement("output");document.body.append(node);
+  const mounted=mountProgram({node,flags:undefined,program:defineProgram<undefined,boolean,Msg,never>({
+    init:()=>[false,[]],update:(failed,msg)=>msg.type==="failed"?[true,[]]:[failed,[reply({status:"ready"})]],view:failed=>h("output",{},String(failed)),
+    subscriptions:failed=>[bridge.subscription(tools,{nativeRegistration:!failed})],
+  })});stops.push(mounted.stop);
+  const caller=createWebMCPCaller(document);stops.push(caller.stop);
+  const before=caller.capture();
+  await vi.waitFor(()=>{expect(mounted.model()).toBe(true);});await mounted.settle();
+  expect([...native.keys()]).toEqual([]);
+  const ready=await caller.captureReady();await expect(ready.executeTool("recover",{})).resolves.toEqual({status:"ready"});
+  await expect(before.executeTool("recover",{})).rejects.toMatchObject({outcome:"cancelled-before-dispatch"});
+});
+
+test("stopping one failed bridge cannot retire another bridge's registration failure",async()=>{
+  installBrowser(()=>Promise.reject(Error("Native registration refused")));
+  const bridge=createWebMCP<{type:"read"}>({onRegistrationError:()=>({type:"read"})});
+  const tools=[defineWebMCPTool({name:"healthy",description:"Read",inputSchema:{type:"object"},parseInput:()=>undefined,toMessage:()=>({type:"read" as const})})];
+  stops.push(bridge.subscription(tools,{nativeRegistration:false}).subscribe(()=>undefined,{call:()=>Promise.resolve({status:"ready"})}));
+  const first=mountAsyncCounter(["failed-first"]),second=mountAsyncCounter(["failed-second"]);
+  const caller=createWebMCPCaller(document);stops.push(caller.stop);
+  await vi.waitFor(()=>{expect(first.mounted.model().error).not.toBe("");expect(second.mounted.model().error).not.toBe("");});
+  await expect(caller.captureReady()).rejects.toMatchObject({outcome:"cancelled-before-dispatch"});
+  first.mounted.stop();await expect(caller.captureReady()).rejects.toMatchObject({outcome:"cancelled-before-dispatch"});
+  second.mounted.stop();const ready=await caller.captureReady();await expect(ready.executeTool("healthy",{})).resolves.toEqual({status:"ready"});
+});
+
+test("a retired registration completing late cannot clear a newer failure",async()=>{
+  const first=Promise.withResolvers<undefined>();let attempt=0;
+  installBrowser(()=>++attempt===1?first.promise:Promise.reject(Error("New registration refused")));
+  let failures=0;
+  const bridge=createWebMCP<{type:"read"}>({onRegistrationError:()=>({type:"read"})});
+  const tools=[defineWebMCPTool({name:"retry",description:"Read",inputSchema:{type:"object"},parseInput:()=>undefined,toMessage:()=>({type:"read" as const})})];
+  const context={call:()=>Promise.resolve({status:"ready"})};
+  const old=bridge.subscription(tools).subscribe(()=>undefined,context);old();
+  stops.push(bridge.subscription(tools).subscribe(()=>{failures++;},context));
+  await vi.waitFor(()=>{expect(failures).toBe(1);});
+  const healthy=createWebMCP<{type:"read"}>({onRegistrationError:()=>({type:"read"})});
+  stops.push(healthy.subscription([{...required(tools[0]),name:"healthy"}],{nativeRegistration:false}).subscribe(()=>undefined,context));
+  first.resolve(undefined);
+  for(let i=0;i<8;i++)await Promise.resolve();
+  const caller=createWebMCPCaller(document);stops.push(caller.stop);
+  await expect(caller.captureReady()).rejects.toMatchObject({outcome:"cancelled-before-dispatch"});
+});

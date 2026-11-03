@@ -521,6 +521,11 @@ fallback catalog available. Passing `true` cannot widen a document declared
 `restricted`; both policies must permit native registration. Omit the option to
 use the document policy alone.
 
+After a native registration failure, the owning Program can republish the same
+bridge with `nativeRegistration: false`. Fresh scoped callers can capture the
+fallback catalog once it is ready. Earlier captures stay invalid, and recovery
+cannot clear another bridge’s registration failure.
+
 No URL parameter or mode switch is needed. Both interfaces use the same
 validation, messages, effects and completion handling. An agent with permission
 to execute page JavaScript can discover and invoke the tools:
