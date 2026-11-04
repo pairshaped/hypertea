@@ -12,12 +12,13 @@ function mount(descriptions?:WebMCPDescriptionPacket) {
  const program=defineProgram<undefined,number,{type:"read"},never>({init:()=>[0,[]],update:model=>[model+1,[reply("read")]],view:()=>h("output",{},"Human page"),subscriptions:()=>[bridge.subscription(tools)]});
  const handle=mountProgram({node,flags:undefined,program,...(descriptions===undefined?{}:{toolDescriptions:[descriptions]})});stops.push(handle.stop);return handle;
 }
-test.each(["en","fr"]as const)("%s native, fallback and built-in tools share stored text and identity",async language=>{
+test.each(["en","fr"]as const)("%s native text comes from the same stored key as fallback and built-in tools",async language=>{
  const native=new Map<string,WebMCPRegisteredTool>();
  Object.assign(document,{modelContext:{registerTool:(tool:WebMCPRegisteredTool,{signal}:{signal:AbortSignal})=>{native.set(tool.name,tool);signal.addEventListener("abort",()=>native.delete(tool.name));return Promise.resolve();}}});
- const text=language==="en"?"Stored English":"Français enregistré";const handle=mount(packet(text,language));await handle.settle();
+ const text=language==="en"?"Stored English":"Français enregistré";const rendered=packet(text,language);const entry=rendered.tools.read;expect(entry?.key).toBe("tool:ExampleApp/read");const handle=mount(rendered);await handle.settle();
  const caller=createWebMCPCaller(document);stops.push(caller.stop);const builtin=await caller.captureReady();
- expect(native.get("read")?.description).toBe(text);expect(window.hyperteaAgent?.getTools()[0]?.description).toBe(text);
+ expect(native.get("read")?.description).toBe(entry?.description);expect(window.hyperteaAgent?.getTools()[0]).toMatchObject({key:entry?.key,scope:rendered.scope,description:entry?.description});
+ expect(native.get("read")).not.toHaveProperty("key");expect(native.get("read")).not.toHaveProperty("scope");expect(native.get("read")).not.toHaveProperty("binding");
  expect(builtin.getTools()[0]).toMatchObject({description:text,key:"tool:ExampleApp/read",scope:"ExampleApp",binding:"signed-render"});
  expect(await builtin.executeTool("read",{})).toBe("read");expect(handle.model()).toBe(1);
 });

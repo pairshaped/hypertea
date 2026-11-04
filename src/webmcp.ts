@@ -446,6 +446,8 @@ export function createWebMCP<Msg extends ProgramMsg>(options: Readonly<{
           void (async () => {
             if (registered.length !== 0) removeAgent = exposeAgentTools(page, registered, ready);
             await Promise.all(registered.map(async (tool) => {
+              // ModelContextTool has no custom identity metadata. Native agents
+              // invoke this page by name; only internal callers return stored keys.
               const {name,description,title,inputSchema,annotations,execute}=tool;
               await modelContext?.registerTool({name,description,inputSchema,execute,
                 ...(title === undefined ? {} : {title}), ...(annotations === undefined ? {} : {annotations})}, { signal: registration.signal });
