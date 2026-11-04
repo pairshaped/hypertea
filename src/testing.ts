@@ -19,6 +19,7 @@ export type TestProgramMount<
   Msg extends ProgramMsg,
   Effect extends ProgramEffect,
 > = Readonly<{
+  toolDescriptions?: ProgramMount<Flags, Model, Msg, Effect>["toolDescriptions"];
   flags: Flags;
   node: HTMLElement;
   program: Program<Flags, Model, Msg, Effect>;

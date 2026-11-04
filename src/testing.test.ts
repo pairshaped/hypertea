@@ -13,6 +13,7 @@ describe("controlled program effects", () => {
       | Readonly<{ type: "request"; id: string }>
       | Readonly<{ type: "completed"; id: string; result: string }>;
     type Effect = Readonly<{ type: "load"; id: string }>;
+    const descriptions=[{scope:"FixtureApp",language:"en" as const,binding:"fixture",tools:{read:{key:"tool:FixtureApp/read",description:"Stored test text"}}}];
     const program = defineProgram<undefined, Model, Msg, Effect>({
       init: () => [{ activeRequest: undefined, result: "initial" }, []],
       update: (model, message) => {
@@ -28,11 +29,12 @@ describe("controlled program effects", () => {
               : [model, []];
         }
       },
+      subscriptions: (_model,context)=>{expect(context.toolDescriptions).toBe(descriptions);return [];},
       view: (model) => h("output", {}, model.result),
     });
     const node = document.createElement("output");
     document.body.append(node);
-    const mounted = mountProgram({ flags: undefined, node, program });
+    const mounted = mountProgram({ toolDescriptions:descriptions, flags: undefined, node, program });
     await mounted.settle();
 
     mounted.dispatch({ type: "request", id: "A" });
