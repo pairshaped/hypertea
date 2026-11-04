@@ -4,7 +4,9 @@ import { clicked, defineProgram, effectOrigin, effectInvocation, h, mountProgram
 import {
   WebMCPInvocationError,
   isWebMCPInvocationError,
-  createWebMCP,
+  createWebMCP as createBridge,
+  type WebMCPBridge,
+  type WebMCPDescriptions,
   createWebMCPCaller,
   defineWebMCPTool,
   exposeMessages,
@@ -16,11 +18,25 @@ import {
 
 const stops: Array<() => void> = [];
 
+// Existing invocation tests use a synthetic server packet. Packet admission and
+// runtime host plumbing have separate tests with the unwrapped bridge.
+function fixtureDescriptions(tools: ReadonlyArray<Readonly<{name:string}>>): WebMCPDescriptions {
+  return [{scope: "fixture",language: "en",binding: "signed-render-fixture",tools:Object.fromEntries(tools.map(tool=>[tool.name,{key:`tool:fixture/${tool.name}`,description:`Stored ${tool.name}`}]))}];
+}
+function createWebMCP<Msg extends Readonly<{type:string}>>(options: Parameters<typeof createBridge<Msg>>[0]):WebMCPBridge<Msg> {
+  const bridge=createBridge(options);
+  return {subscription:(tools,options)=> {
+    const subscription=bridge.subscription(tools,options);
+    return {...subscription,subscribe:(dispatch,context)=>subscription.subscribe(dispatch,{toolDescriptions:fixtureDescriptions(tools),...context})};
+  }};
+}
+
+
 test("tool origin follows asynchronous effects without marking intervening human actions", async () => {
   const native = installBrowser();
   type Msg = Readonly<{ type: "begin" | "continued" }>;
   const bridge = createWebMCP<Msg>({ onRegistrationError: () => ({ type: "begin" }) });
-  const tools = [defineWebMCPTool({ name: "origin", description: "Check origin", inputSchema: { type: "object" },
+  const tools = [defineWebMCPTool({ name: "origin",  inputSchema: { type: "object" },
     parseInput: () => undefined, toMessage: (): Msg => ({ type: "begin" }) })];
   const observed: Array<string | undefined> = [];
   const invocations: Array<ReturnType<typeof effectInvocation>> = [];
@@ -93,7 +109,7 @@ describe("native registration declaration", () => {
   };
   async function mountTool(name: string, onRegistrationError: () => Msg = () => ({ type: "failed" }), nativeRegistration?:boolean) {
     const bridge = createWebMCP<Msg>({ onRegistrationError });
-    const tools = [defineWebMCPTool({ name, description: name, inputSchema: { type: "object" },
+    const tools = [defineWebMCPTool({ name,  inputSchema: { type: "object" },
       parseInput: () => undefined, toMessage: (): Msg => ({ type: "ping" }) })];
     const node = document.createElement("output");
     document.body.append(node);
@@ -247,7 +263,7 @@ function mountAsyncCounter(names: ReadonlyArray<string> = ["save"]) {
   const bridge = createWebMCP<Msg>({ onRegistrationError: (error) => ({ type: "registrationFailed", error }) });
   const declarations = names.map((name) => defineWebMCPTool({
     name,
-    description: "Save a counter value",
+
     inputSchema: { type: "object", properties: { amount: { type: "number" } }, required: ["amount"] },
     parseInput: parseAmount,
     toMessage: (amount): Msg => ({ type: "save", amount }),
@@ -329,9 +345,9 @@ describe("WebMCP program integration", () => {
     stops.push(stop);
     expect(await agent.executeTool("save", { amount: 1 })).toEqual(refusal);
     const bridge = copy.createWebMCP<{ type: "release" }>({ onRegistrationError: () => { throw Error("Registration failed"); } });
-    const tool = copy.defineWebMCPTool({ name: "release", description: "Release", inputSchema: {}, parseInput: () => undefined, toMessage: () => ({ type: "release" as const }) });
+    const tool = copy.defineWebMCPTool({ name: "release",  inputSchema: {}, parseInput: () => undefined, toMessage: () => ({ type: "release" as const }) });
     const node = document.createElement("output"); document.body.append(node);
-    const second = mountProgram({ node, flags: undefined, program: defineProgram<undefined, number, { type: "release" }, never>({
+    const second = mountProgram({ toolDescriptions: fixtureDescriptions([tool]), node, flags: undefined, program: defineProgram<undefined, number, { type: "release" }, never>({
       init: () => [0, []], update: model => [model, [reply("released")]], view: model => h("output", {}, model),
       subscriptions: () => [bridge.subscription([tool])],
     }) });
@@ -492,7 +508,7 @@ describe("WebMCP program integration", () => {
     const declarations = [defineWebMCPTool({
       name: "add",
       title: "Add to counter",
-      description: "Add to the counter",
+
       annotations: { consequentialHint: false },
       inputSchema: { type: "object", properties: { amount: { type: "number" } }, required: ["amount"] },
       parseInput: parseAmount,
@@ -725,7 +741,7 @@ describe("WebMCP program integration", () => {
       onRegistrationError: (error) => ({ type: "registrationFailed", error: String(error) }),
     });
     const declarations = ["other", "occupied"].map((name) => defineWebMCPTool({
-      name, description: "Registration test", inputSchema: { type: "object" },
+      name,  inputSchema: { type: "object" },
       parseInput: (input: unknown) => input,
       toMessage: (): Msg => ({ type: "registrationFailed", error: "Unused" }),
     }));
@@ -750,7 +766,7 @@ describe("WebMCP program integration", () => {
 
 test("allowlisted messages validate before dispatch and complete through the mounted program", async () => {
   type Msg = { type: "add"; amount: number } | { type: "failed" };
-  const mcpTools = exposeMessages<Msg>([{ message: "add", description: "Add a number" }], {
+  const mcpTools = exposeMessages<Msg>([{ message: "add" }], {
     add: { type: "object", properties: { amount: { type: "number" } }, required: ["amount"], additionalProperties: false },
   });
   const bridge = createWebMCP<Msg>({ onRegistrationError: () => ({ type: "failed" }) });
@@ -791,7 +807,7 @@ test("registration failure rejects an already dispatched call", async () => {
 
 test("adapter preserves a pre-dispatch rejection from its subscription call boundary", async () => {
   const bridge = createWebMCP<{ type: "read" }>({ onRegistrationError: () => { throw new Error("Unexpected registration failure"); } });
-  const tools = [defineWebMCPTool({ name: "read", description: "Read", inputSchema: {}, parseInput: () => undefined, toMessage: () => ({ type: "read" as const }) })];
+  const tools = [defineWebMCPTool({ name: "read",  inputSchema: {}, parseInput: () => undefined, toMessage: () => ({ type: "read" as const }) })];
   const stop = bridge.subscription(tools).subscribe(() => undefined, {
     call: () => Promise.reject(Object.assign(new Error("cancelled"), { outcome: "cancelled-before-dispatch" })),
   });
@@ -801,7 +817,7 @@ test("adapter preserves a pre-dispatch rejection from its subscription call boun
 
 
 function jsonTool() {
-  const [tool] = exposeMessages<{type: "replace"; document: unknown}>([{message: "replace", description: "Replace a JSON document"}], {
+  const [tool] = exposeMessages<{type: "replace"; document: unknown}>([{message: "replace"}], {
     replace: {type: "object", properties: {document: {"x-hypertea-json-value": true}}, required: ["document"], additionalProperties: false},
   });
   if (tool === undefined) throw new Error("Missing JSON tool");
@@ -848,7 +864,7 @@ test("JSON admission never invokes proxy reads or custom serialization", () => {
 });
 
 test("JSON admission rejects operation array accessors before schema traversal", () => {
-  const [tool] = exposeMessages<{type: "replace"; operations: unknown}>([{message: "replace", description: "Replace"}], {
+  const [tool] = exposeMessages<{type: "replace"; operations: unknown}>([{message: "replace"}], {
     replace: {type: "object", properties: {operations: {type: "array", items: {type: "object", properties: {document: {"x-hypertea-json-value": true}}, required: ["document"], additionalProperties: false}}}, required: ["operations"], additionalProperties: false},
   });
   if (tool === undefined) throw new Error("Missing tool");
@@ -880,7 +896,7 @@ test("JSON admission refuses data that becomes non-JSON between validation and c
 });
 
 test("JSON admission rechecks closed discriminants after copying", () => {
-  const [tool] = exposeMessages<{type: "replace"; mode: "review"; document: unknown}>([{message: "replace", description: "Replace"}], {
+  const [tool] = exposeMessages<{type: "replace"; mode: "review"; document: unknown}>([{message: "replace"}], {
     replace: {type: "object", properties: {mode: {const: "review"}, document: {"x-hypertea-json-value": true}}, required: ["mode", "document"], additionalProperties: false},
   });
   if (tool === undefined) throw new Error("Missing tool");
@@ -1005,7 +1021,7 @@ test.each(["native", "fallback", "builtin"] as const)("%s refuses pure mapping f
   type Msg = {type: "read" | "failed"};
   const bridge = createWebMCP<Msg>({onRegistrationError: () => ({type: "failed"})});
   const secret = "private-input-must-not-escape";
-  const declaration = defineWebMCPTool({name: "read", description: "Read", inputSchema: {type: "object"},
+  const declaration = defineWebMCPTool({name: "read",  inputSchema: {type: "object"},
     parseInput: () => {throw new Error(secret);}, toMessage: (): Msg => ({type: "read"})});
   const call = vi.fn(() => Promise.resolve("unexpected"));
   stops.push(bridge.subscription([declaration]).subscribe(() => undefined, {call}));
@@ -1029,7 +1045,7 @@ test.each(["invalid-input", "unknown-tool"] as const)("a dispatched error cannot
   const native = installBrowser();
   type Msg = {type: "read"};
   const bridge = createWebMCP<Msg>({onRegistrationError: () => ({type: "read"})});
-  const declaration = defineWebMCPTool({name: "read", description: "Read", inputSchema: {type: "object"},
+  const declaration = defineWebMCPTool({name: "read",  inputSchema: {type: "object"},
     parseInput: () => undefined, toMessage: (): Msg => ({type: "read"})});
   stops.push(bridge.subscription([declaration]).subscribe(() => undefined, {
     call: () => Promise.reject(new WebMCPInvocationError("unknown", reason)),
@@ -1043,7 +1059,7 @@ test("a missing captured name never reaches mapping, admission or private work",
   const parse = vi.fn(() => undefined);
   const call = vi.fn(() => Promise.resolve("read"));
   const admission = vi.fn();
-  const declaration = defineWebMCPTool({name: "read", description: "Read", inputSchema: {type: "object"},
+  const declaration = defineWebMCPTool({name: "read",  inputSchema: {type: "object"},
     parseInput: parse, toMessage: (): {type: "read"} => ({type: "read"})});
   stops.push(bridge.subscription([declaration]).subscribe(() => undefined, {call}));
   stops.push(observeWebMCPCalls(document, {beforeDispatch: admission, onStart: admission}));
@@ -1082,7 +1098,7 @@ test("message tools validate without Object.hasOwn", () => {
   Reflect.deleteProperty(Object, "hasOwn");
   try {
     const declarations = exposeMessages<{ type: "add"; amount: number }>([
-      { message: "add", description: "Add" },
+      { message: "add" },
     ], {
       add: { type: "object", properties: { amount: { type: "number" } }, required: ["amount"], additionalProperties: false },
     });
@@ -1102,7 +1118,7 @@ test("a fresh built-in ready capture recovers after native failure falls back",a
   const native=installBrowser(()=>Promise.reject(Error("Native registration refused")));
   type Msg={type:"read"}|{type:"failed"};
   const bridge=createWebMCP<Msg>({onRegistrationError:()=>({type:"failed"})});
-  const tools=[defineWebMCPTool({name:"recover",description:"Read",inputSchema:{type:"object"},parseInput:()=>undefined,toMessage:():Msg=>({type:"read"})})];
+  const tools=[defineWebMCPTool({name:"recover",inputSchema:{type:"object"},parseInput:()=>undefined,toMessage:():Msg=>({type:"read"})})];
   const node=document.createElement("output");document.body.append(node);
   const mounted=mountProgram({node,flags:undefined,program:defineProgram<undefined,boolean,Msg,never>({
     init:()=>[false,[]],update:(failed,msg)=>msg.type==="failed"?[true,[]]:[failed,[reply({status:"ready"})]],view:failed=>h("output",{},String(failed)),
@@ -1119,7 +1135,7 @@ test("a fresh built-in ready capture recovers after native failure falls back",a
 test("stopping one failed bridge cannot retire another bridge's registration failure",async()=>{
   installBrowser(()=>Promise.reject(Error("Native registration refused")));
   const bridge=createWebMCP<{type:"read"}>({onRegistrationError:()=>({type:"read"})});
-  const tools=[defineWebMCPTool({name:"healthy",description:"Read",inputSchema:{type:"object"},parseInput:()=>undefined,toMessage:()=>({type:"read" as const})})];
+  const tools=[defineWebMCPTool({name:"healthy",inputSchema:{type:"object"},parseInput:()=>undefined,toMessage:()=>({type:"read" as const})})];
   stops.push(bridge.subscription(tools,{nativeRegistration:false}).subscribe(()=>undefined,{call:()=>Promise.resolve({status:"ready"})}));
   const first=mountAsyncCounter(["failed-first"]),second=mountAsyncCounter(["failed-second"]);
   const caller=createWebMCPCaller(document);stops.push(caller.stop);
@@ -1134,7 +1150,7 @@ test("a retired registration completing late cannot clear a newer failure",async
   installBrowser(()=>++attempt===1?first.promise:Promise.reject(Error("New registration refused")));
   let failures=0;
   const bridge=createWebMCP<{type:"read"}>({onRegistrationError:()=>({type:"read"})});
-  const tools=[defineWebMCPTool({name:"retry",description:"Read",inputSchema:{type:"object"},parseInput:()=>undefined,toMessage:()=>({type:"read" as const})})];
+  const tools=[defineWebMCPTool({name:"retry",inputSchema:{type:"object"},parseInput:()=>undefined,toMessage:()=>({type:"read" as const})})];
   const context={call:()=>Promise.resolve({status:"ready"})};
   const old=bridge.subscription(tools).subscribe(()=>undefined,context);old();
   stops.push(bridge.subscription(tools).subscribe(()=>{failures++;},context));

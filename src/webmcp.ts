@@ -1,14 +1,10 @@
+import {parseWebMCPDescriptionPackets} from "./tool-descriptions.js";
+import { readJsonData, type WebMCPValue } from "./json-data.js";
+export type { WebMCPValue } from "./json-data.js";
+export {parseWebMCPDescriptions,parseWebMCPDescriptionPackets} from "./tool-descriptions.js";
+export type {WebMCPDescriptionPacket,WebMCPDescriptions} from "./tool-descriptions.js";
 import { anySignal } from "./abort.js";
 import type { EffectOrigin, ProgramMsg, ProgramSubscription } from "./program.js";
-
-export type WebMCPValue =
-  | string
-  | number
-  | boolean
-  // null is allowed at the JSON protocol boundary, not as runtime state.
-  | null
-  | ReadonlyArray<WebMCPValue>
-  | Readonly<{ [key: string]: WebMCPValue; }>;
 
 // Shell and feature bundles must recognize the same canonical failures without
 // treating arbitrary objects with outcome fields as safe pre-dispatch refusals.
@@ -40,6 +36,9 @@ export class WebMCPInvocationError extends Error {
 export type WebMCPToolMetadata = Readonly<{
   name: string;
   description: string;
+  key?: string;
+  scope?: string;
+  binding?: string;
   title?: string;
   inputSchema: Readonly<Record<string, unknown>>;
   annotations?: Readonly<{
@@ -59,7 +58,7 @@ export type WebMCPInputSchema =
   | Readonly<{ type: "array"; items: WebMCPInputSchema }>
   | Readonly<{ type: "object"; properties: Readonly<Record<string, WebMCPInputSchema>>; required: ReadonlyArray<string>; additionalProperties: false }>;
 
-export type WebMCPTool<Msg extends ProgramMsg> = WebMCPToolMetadata & Readonly<{
+export type WebMCPTool<Msg extends ProgramMsg> = Omit<WebMCPToolMetadata, "description" | "key" | "scope" | "binding"> & Readonly<{
   toMessage: (input: unknown) => Msg;
 }>;
 
@@ -226,8 +225,8 @@ function exposeAgentTools(page: Document, tools: ReadonlyArray<AgentTool>, ready
   const entries = tools.map((tool) => {
     if (names.has(tool.name)) throw new Error(`Duplicate tool: ${tool.name}`);
     names.add(tool.name);
-    const { name, description, title, inputSchema, annotations } = tool;
-    return { tool, metadata: JSON.stringify({ name, description, title, inputSchema, annotations }), ready };
+    const { name, description, title, inputSchema, annotations, key, scope, binding } = tool;
+    return { tool, metadata: JSON.stringify({ name, description, title, inputSchema, annotations, key, scope, binding }), ready };
   });
   if (publication === undefined) {
     if ("hyperteaAgent" in host || page.getElementById("hypertea-agent-tools") !== null) {
@@ -271,7 +270,7 @@ type ModelContext = Readonly<{
 }>;
 
 export function defineWebMCPTool<Input, Msg extends ProgramMsg>(
-  declaration: WebMCPToolMetadata & Readonly<{
+  declaration: Omit<WebMCPToolMetadata, "description" | "key" | "scope" | "binding"> & Readonly<{
     parseInput: (input: unknown) => Input;
     toMessage: (input: Input) => Msg;
   }>,
@@ -283,7 +282,7 @@ export function defineWebMCPTool<Input, Msg extends ProgramMsg>(
   };
 }
 
-export type WebMCPMessages<Msg extends ProgramMsg> = ReadonlyArray<Readonly<{ message: Msg["type"] }> & Omit<WebMCPToolMetadata, "name" | "inputSchema">>;
+export type WebMCPMessages<Msg extends ProgramMsg> = ReadonlyArray<Readonly<{ message: Msg["type"] }> & Omit<WebMCPToolMetadata, "name" | "inputSchema" | "description" | "key" | "scope" | "binding">>;
 
 /** Select existing messages. Generate the second argument from this declaration at build time. */
 export function exposeMessages<Msg extends ProgramMsg>(
@@ -345,48 +344,8 @@ function matchesInput(schema: WebMCPInputSchema, input: unknown): boolean {
   }
 }
 
-/** Inspect data descriptors without executing getters or custom JSON serialization. */
-function readJsonData(input: unknown, ancestors: Set<object>): WebMCPValue | undefined {
-  if (input === null || typeof input === "string" || typeof input === "boolean") return input;
-  if (typeof input === "number") return Number.isFinite(input) ? input : undefined;
-  if (typeof input !== "object" || ancestors.has(input)) return undefined;
-  try {
-    const array = Array.isArray(input);
-    const prototype: unknown = Object.getPrototypeOf(input);
-    if (array ? prototype !== Array.prototype : prototype !== Object.prototype && prototype !== null) return undefined;
-    const descriptors = Object.getOwnPropertyDescriptors(input);
-    if (Reflect.ownKeys(descriptors).some(key => typeof key !== "string")) return undefined;
-    if (!Object.prototype.hasOwnProperty.call(descriptors, "toJSON") && (Object.getOwnPropertyDescriptor(Object.prototype, "toJSON") !== undefined
-      || (array && Object.getOwnPropertyDescriptor(Array.prototype, "toJSON") !== undefined))) return undefined;
-    ancestors.add(input);
-    try {
-      if (array) {
-        const length: unknown = descriptors.length?.value;
-        if (typeof length !== "number" || !Number.isSafeInteger(length) || length < 0 || Object.keys(descriptors).length !== length + 1) return undefined;
-        const result: Array<WebMCPValue> = [];
-        for (let index = 0; index < length; index++) {
-          const entry = descriptors[String(index)];
-          if (entry === undefined || !("value" in entry) || entry.enumerable !== true) return undefined;
-          const value = readJsonData(entry.value, ancestors);
-          if (value === undefined) return undefined;
-          result.push(value);
-        }
-        return result;
-      }
-      const result: Record<string, WebMCPValue> = Object.create(null) as Record<string, WebMCPValue>;
-      for (const [key, entry] of Object.entries(descriptors)) {
-        if (!("value" in entry) || entry.enumerable !== true) return undefined;
-        const value = readJsonData(entry.value, ancestors);
-        if (value === undefined) return undefined;
-        result[key] = value;
-      }
-      return result;
-    } finally { ancestors.delete(input); }
-  } catch { return undefined; }
-}
-
 export type WebMCPBridge<Msg extends ProgramMsg> = Readonly<{
-  subscription: (tools: ReadonlyArray<WebMCPTool<Msg>>,options?:Readonly<{nativeRegistration?:boolean}>) => ProgramSubscription<Msg>;
+  subscription: (tools: ReadonlyArray<WebMCPTool<Msg>>,options?:Readonly<{nativeRegistration?:boolean;toolDescriptions?:unknown}>) => ProgramSubscription<Msg>;
 }>;
 
 let nextBridge = 0;
@@ -399,13 +358,14 @@ export function createWebMCP<Msg extends ProgramMsg>(options: Readonly<{
 
 
   return {
-    subscription: (tools,{nativeRegistration=true}={}) => {
+    subscription: (tools,{nativeRegistration=true,toolDescriptions}={}) => {
       // The tools reference is part of the subscription payload. A changed
       // declaration set must restart registration, even with the same key.
       const subscription = {
         key,
         tools,
         nativeRegistration,
+        toolDescriptions,
         subscribe: (dispatch, context) => {
           const page = typeof document === "undefined" ? undefined : document;
           if (page === undefined) return () => {
@@ -435,9 +395,25 @@ export function createWebMCP<Msg extends ProgramMsg>(options: Readonly<{
             registration.abort();
             removeAgent?.();
           };
-          const registered = tools.map((tool): AgentTool => {
-            const { toMessage, ...metadata } = tool;
-            return {
+          let packets = context.toolDescriptions;
+          if (toolDescriptions !== undefined) {
+            try {packets=parseWebMCPDescriptionPackets(toolDescriptions);}
+            catch {globalThis.console.error("Invalid WebMCP description packets");packets=[];}
+          }
+          const registered = tools.flatMap((tool): ReadonlyArray<AgentTool> => {
+            const matching = packets?.filter(packet => Object.prototype.hasOwnProperty.call(packet.tools, tool.name));
+            const packet = matching?.length === 1 ? matching[0] : undefined;
+            const entry = packet?.tools[tool.name];
+            if (packet === undefined || entry === undefined || entry.description.trim() === "") {
+              // A missing tool leaves other tools and the human UI available.
+              // The server reports missing stored rows; this also reports host omissions.
+              globalThis.console.error(`Missing WebMCP description: ${(packet?.scope ?? packets?.[0]?.scope ?? "unbound").slice(0, 512)}/${tool.name.slice(0, 128)}`);
+              return [];
+            }
+            const { toMessage, name, title, inputSchema, annotations } = tool;
+            const metadata: WebMCPToolMetadata = {name, description: entry.description, key: entry.key, scope: packet.scope, binding: packet.binding,
+              ...(title === undefined ? {} : {title}), inputSchema, ...(annotations === undefined ? {} : {annotations})};
+            return [{
               ...metadata,
               execute: async (input, execution, origin = "native", caller) => {
                 const signal = execution?.signal;
@@ -465,12 +441,14 @@ export function createWebMCP<Msg extends ProgramMsg>(options: Readonly<{
                     ? "cancelled-before-dispatch" : "unknown", deadline.signal.aborted ? "timeout" : undefined);
                 } finally { globalThis.clearTimeout(timer); }
               },
-            };
+            }];
           });
           void (async () => {
             if (registered.length !== 0) removeAgent = exposeAgentTools(page, registered, ready);
             await Promise.all(registered.map(async (tool) => {
-              await modelContext?.registerTool(tool, { signal: registration.signal });
+              const {name,description,title,inputSchema,annotations,execute}=tool;
+              await modelContext?.registerTool({name,description,inputSchema,execute,
+                ...(title === undefined ? {} : {title}), ...(annotations === undefined ? {} : {annotations})}, { signal: registration.signal });
             }));
             clearFailure(page);
             finishRegistration(true);
@@ -484,7 +462,7 @@ export function createWebMCP<Msg extends ProgramMsg>(options: Readonly<{
           });
           return ()=>{unsubscribe();clearFailure(page);};
         },
-      } satisfies ProgramSubscription<Msg> & { tools: ReadonlyArray<WebMCPTool<Msg>>; nativeRegistration:boolean; };
+      } satisfies ProgramSubscription<Msg> & { tools: ReadonlyArray<WebMCPTool<Msg>>; nativeRegistration:boolean; toolDescriptions:unknown; };
       return subscription;
     },
   };

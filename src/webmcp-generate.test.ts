@@ -27,7 +27,7 @@ test("derives tool names and object inputs only for allowlisted messages", () =>
     type Msg =
       | { type: "add"; amount: number }
       | { type: "loaded"; internal: AbortController };
-    exposeMessages<Msg>([{ "message": "add", description: "Add to the counter" }], {});
+    exposeMessages<Msg>([{ "message": "add" }], {});
   `);
   expect(generateWebMCPSchemas(program, path)).toEqual({
     add: { type: "object", properties: { amount: { type: "number" } }, required: ["amount"], additionalProperties: false },
@@ -41,7 +41,7 @@ test("preserves nested payloads, optional fields, readonly arrays and alternativ
       { choices: readonly ("league" | "event")[]; range: { limit: number; label: string | null } }
       | { path: string; version: 1 }
     )>;
-    exposeMessages<Msg>([{ message: "filter", description: "Filter" }], {});
+    exposeMessages<Msg>([{ message: "filter" }], {});
   `);
   const schemas = generateWebMCPSchemas(program, path);
   expect(schemas.filter).toMatchObject({
@@ -64,7 +64,7 @@ test.each([
     import { exposeMessages } from "./webmcp.js";
     type Payload = ${payload};
     type Msg = { type: "send"; payload: Payload };
-    exposeMessages<Msg>([{ message: "send", description: "Send" }], {});
+    exposeMessages<Msg>([{ message: "send" }], {});
   `);
   expect(() => generateWebMCPSchemas(program, path)).toThrow(error);
 });
@@ -73,11 +73,11 @@ test("accepts an imported alias and treats root invocation as ordinary input", (
   const { program, path } = fixture(`
     import { exposeMessages as expose } from "./webmcp.js";
     type Msg = { type: "send"; invocation: string };
-    expose<Msg>([{ message: "send", description: "Send" }], {});
+    expose<Msg>([{ message: "send" }], {});
   `);
   const schemas = generateWebMCPSchemas(program, path);
   expect(schemas).toEqual({ send: { type: "object", properties: { invocation: { type: "string" } }, required: ["invocation"], additionalProperties: false } });
-  const [tool] = exposeMessages<{ type: "send"; invocation: string }>([{ message: "send", description: "Send" }], schemas);
+  const [tool] = exposeMessages<{ type: "send"; invocation: string }>([{ message: "send" }], schemas);
   if (tool === undefined) throw new Error("Expected generated tool");
   expect(tool.toMessage({ invocation: "application data" })).toEqual({ type: "send", invocation: "application data" });
   expect(() => tool.toMessage({})).toThrow(/Invalid input/);
@@ -115,7 +115,7 @@ test("reports missing source and supports messages without input fields", () => 
   const { program, path } = fixture(`
     import { exposeMessages } from "./webmcp.js";
     type Msg = { type: "send" };
-    exposeMessages<Msg>([{ message: "send", description: "Send" }], {});
+    exposeMessages<Msg>([{ message: "send" }], {});
   `);
   expect(() => generateWebMCPSchemas(program, "absent.ts")).toThrow(/Source is not/);
   expect(generateWebMCPSchemas(program, path)).toEqual({ send: { type: "object", properties: {}, required: [], additionalProperties: false } });
@@ -130,7 +130,7 @@ test.each([
     import { exposeMessages } from "./webmcp.js";
     ${declaration}
     type Msg = { type: "send"; payload: Payload };
-    exposeMessages<Msg>([{ message: "send", description: "Send" }], {});
+    exposeMessages<Msg>([{ message: "send" }], {});
   `);
   expect(() => generateWebMCPSchemas(program, path)).toThrow(/Unsupported/);
 });
@@ -146,7 +146,7 @@ test("rejects open message records, including when the payload is otherwise vali
   const { program, path } = fixture(`
     import { exposeMessages } from "./webmcp.js";
     type Msg = { type: "send"; [key: string]: unknown };
-    exposeMessages<Msg>([{ message: "send", description: "Send" }], {});
+    exposeMessages<Msg>([{ message: "send" }], {});
   `);
   expect(() => generateWebMCPSchemas(program, path)).toThrow(/Unsupported/);
 });
@@ -159,10 +159,10 @@ test("generated schemas validate JSON inputs and dispatch independent copies of 
       mapped: Record<"x" | "y", number>; nested: { type: string; invocation: string }
     }> & { marker: 1 };
     type Msg = { type: "send"; payload: Payload };
-    exposeMessages<Msg>([{ message: "send", description: "Send" }], {});
+    exposeMessages<Msg>([{ message: "send" }], {});
   `);
   const schemas = generateWebMCPSchemas(program, path);
-  const [tool] = exposeMessages<{ type: "send"; payload: unknown }>([{ message: "send", description: "Send" }], schemas);
+  const [tool] = exposeMessages<{ type: "send"; payload: unknown }>([{ message: "send" }], schemas);
   if (tool === undefined) throw new Error("Expected generated tool");
   const payload = { enabled: true, mode: "one", values: [1], range: { limit: 2, label: null }, yes: true, no: false, mapped: { x: 1, y: 2 }, nested: { type: "data", invocation: "data" }, marker: 1 };
   const message = tool.toMessage({ payload });
@@ -183,16 +183,15 @@ test("generated schemas validate JSON inputs and dispatch independent copies of 
 
 test("rejects stale or missing sidecars before registering any tools", () => {
   type Msg = { type: "send" };
-  expect(() => exposeMessages<Msg>([{ message: "send", description: "Send" }], {})).toThrow(/Stale/);
-  expect(() => exposeMessages<Msg>([{ message: "send", description: "Send" }], { other: { type: "number" } })).toThrow(/Missing/);
-  expect(() => exposeMessages<Msg>([{ message: "send", description: "Send" }, { message: "send", description: "Again" }], { send: { type: "number" } })).toThrow(/Duplicate/);
+  expect(() => exposeMessages<Msg>([{ message: "send" }], {})).toThrow(/Stale/);
+  expect(() => exposeMessages<Msg>([{ message: "send" }], { other: { type: "number" } })).toThrow(/Missing/);
+  expect(() => exposeMessages<Msg>([{ message: "send" }, { message: "send" }], { send: { type: "number" } })).toThrow(/Duplicate/);
   expect(exposeMessages<Msg>([], {})).toEqual([]);
 });
 
 test.each([
-  ['{ message: "typo", description: "Send" }', /typo/],
-  ['{ message: "send" }', /description/],
-  ['{ message: "send", description: 42 }', /string/],
+  ['{ message: "typo" }', /typo/],
+  ['{ message: "send", title: 42 }', /string/],
 ])("TypeScript rejects invalid tool entries: %s", (entry, error) => {
   const { program, path } = fixture(`
     import { exposeMessages } from "./webmcp.js";
@@ -214,7 +213,7 @@ test.each([
     import { exposeMessages } from "./webmcp.js";
     ${imports}
     type Msg = {type: "propose"; operations: readonly {operation: "replace_document"; document: WebMCPValue}[]};
-    exposeMessages<Msg>([{message: "propose", description: "Propose"}], {});
+    exposeMessages<Msg>([{message: "propose"}], {});
   `, {}, {[resolve("src/json-reexport.ts")]: 'export type { WebMCPValue as Json } from "./webmcp.js";'});
   expect(generateWebMCPSchemas(program, path)).toEqual({propose: {type: "object", required: ["operations"], additionalProperties: false,
     properties: {operations: {type: "array", items: {type: "object", required: ["operation", "document"], additionalProperties: false,
@@ -229,7 +228,7 @@ test.each([
     import { exposeMessages } from "./webmcp.js";
     ${declaration}
     type Msg = {type: "send"; payload: WebMCPValue};
-    exposeMessages<Msg>([{message: "send", description: "Send"}], {});
+    exposeMessages<Msg>([{message: "send"}], {});
   `, {}, {[resolve("src/spoof/webmcp.ts")]: 'export type WebMCPValue = string | null | readonly WebMCPValue[];'});
   if (declaration.startsWith("import")) expect(program.getSourceFile(resolve("src/spoof/webmcp.ts"))).toBeDefined();
   expect(() => generateWebMCPSchemas(program, path)).toThrow(/Recursive|Unsupported/);
@@ -241,7 +240,7 @@ test("unresolved imported JSON names are rejected rather than treated as canonic
     import { exposeMessages } from "./webmcp.js";
     import type { MissingJson } from "./missing-json.js";
     type Msg = {type: "send"; payload: MissingJson};
-    exposeMessages<Msg>([{message: "send", description: "Send"}], {});
+    exposeMessages<Msg>([{message: "send"}], {});
   `);
   expect(() => generateWebMCPSchemas(program, path)).toThrow(/Unsupported/);
 });

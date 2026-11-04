@@ -23,7 +23,7 @@
       import { clicked, defineProgram, h, mountProgram, reply } from "../dist/program.js";
       import { createWebMCP } from "../dist/webmcp.js";
 
-      import { mcpTools } from "./webmcp-tools.js";
+      import { mcpTools, mcpDescriptions } from "./webmcp-tools.js";
 
       // This entry module owns browser plumbing and the effect interpreter.
       // Real applications keep their existing program and interpreter.
@@ -62,6 +62,7 @@
         subscriptions: (model) => model.enabled ? [bridge.subscription(mcpTools)] : [],
       });
       const mounted = mountProgram({
+        toolDescriptions: [mcpDescriptions],
         node: document.getElementById("app"), flags: document.modelContext !== undefined, program,
         runEffect: async (dispatch, effect) => {
           switch (effect.type) {

@@ -10,7 +10,7 @@ frame, and settles the call before starting the transition's effects.
 
 The runtime owns waiting calls and their lifetimes. Applications own tool
 descriptions, annotations, business validation, outcomes and result projections.
-`exposeMessages<Msg>` takes an explicit array of `{ message, description }`
+`exposeMessages<Msg>` takes an explicit array of `{ message }`
 entries, with optional title and annotations, and returns `mcpTools`. Names are
 checked against the existing message union; duplicate entries are rejected.
 Exposure stays outside message payloads: no `mcp` field or custom annotation is
@@ -20,6 +20,17 @@ against the same schemas and maps inputs to program calls. The
 compiler stays outside browser imports. Builds check the committed sidecar for
 drift. Unsupported types fail generation rather than widening the contract.
 Message unions stay organized by application behavior, not by caller type.
+
+The host supplies a packet array beside business flags, with one packet per
+declaring scope in a composed island. Its scope, language,
+render binding and name-to-key/text map travel through Program and subscription
+contexts. Declarations have no runtime prose defaults. A tool without text is
+omitted and its identity is reported; other tools and the human page remain
+available. The internal publication retains key, scope and binding for the
+application server's discovery validation. Native registration receives standard
+WebMCP metadata. A replaced page mounts a fresh packet and retires old callers.
+Packet parsing lives in a pure module, so ordinary Program imports do not load
+the browser adapter.
 
 Generation preserves optional properties and union alternatives and excludes the
 root discriminator. Selected messages need no completion metadata. It does not

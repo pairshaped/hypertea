@@ -456,10 +456,26 @@ import { exposeMessages } from "@pairshaped/hypertea/webmcp";
 import schemas from "./webmcp.generated.js";
 
 const mcpTools = exposeMessages<Msg>([
-  { message: "filterProductResults", description: "Filter the visible catalog" },
-  { message: "toggleNavigation", description: "Set open, or omit it to toggle navigation" },
+  { message: "filterProductResults" },
+  { message: "toggleNavigation" },
 ], schemas);
 ```
+
+Supply tool text through the host's `toolDescriptions` packet array mount option, alongside
+business flags. The packet carries `scope`, `language`, `binding`, and a `tools`
+map from tool name to `{ key, description }`. Island hosts read the same packet
+from `data-tool-descriptions`; `parseWebMCPDescriptionPackets` validates manual hosts.
+Programs and subscriptions receive the packet through their context. Refresh it
+by replacing the mount when a new server page arrives. A composed document host
+can supply `toolDescriptions` in the bridge subscription options when its server
+document changes without replacing the Program. Invalid packets omit tools and
+report a fixed error; they never fall back to the older mount text.
+
+Declarations contain no description default. A tool without text is omitted and
+its scope/name is reported without prose. Other tools and the human UI remain
+available. Native, fallback and built-in callers receive the same stored text.
+The internal publication retains key, scope and binding so an application's
+server can validate discovery and resolve its own text again.
 
 Each `message` name is checked against `Msg["type"]`. The generator reads
 their payload types and writes the schema sidecar; Hypertea uses those same schemas to validate inputs

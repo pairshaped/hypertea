@@ -16,6 +16,7 @@ export function generateWebMCPSchemas(program: ts.Program, sourcePath: string): 
   const checker = program.getTypeChecker();
   const canonicalModules = new Set([
     "./webmcp.ts", "./webmcp.d.ts", "../src/webmcp.ts", "../dist/webmcp.d.ts",
+    "./json-data.ts", "./json-data.d.ts", "../src/json-data.ts", "../dist/json-data.d.ts",
   ].map(path => fileURLToPath(new URL(path, import.meta.url))));
   function canonicalJson(type: ts.Type): boolean {
     const symbol = type.aliasSymbol;

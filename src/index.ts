@@ -1,3 +1,4 @@
+import { parseWebMCPDescriptionPackets, type WebMCPDescriptions } from "./tool-descriptions.js";
 export { anySignal } from "./abort.js";
 const elementNodeType = 1;
 const textNodeType = 3;
@@ -266,6 +267,7 @@ export type ProgramSubscriber<Msg extends ProgramMsg> = (
 ) => Unsubscribe;
 
 export type SubscriptionContext<Msg extends ProgramMsg = ProgramMsg> = Readonly<{
+  toolDescriptions?: WebMCPDescriptions;
   call: (message: Msg, options?: CallOptions) => Promise<JsonValue>;
 }>;
 
@@ -275,6 +277,7 @@ export type ProgramSubscription<Msg extends ProgramMsg> = Readonly<{
 }>;
 
 export type ProgramContext<Flags> = Readonly<{
+  toolDescriptions?: WebMCPDescriptions;
   flags: Flags;
   node: HTMLElement;
   settle: () => Promise<void>;
@@ -304,6 +307,7 @@ export type ProgramHandle<Model, Msg extends ProgramMsg> = Readonly<{
 }>;
 
 type RuntimeBase<Model, Msg extends ProgramMsg, Effect extends ProgramEffect> = Readonly<{
+  toolDescriptions?: WebMCPDescriptions;
   init: () => Transition<Model, Effect>;
   update: (model: Model, message: Msg, origin: EffectOrigin | undefined) => Transition<Model, Effect>;
   view: (model: Model) => VNode<Model>;
@@ -338,6 +342,7 @@ type ProgramMountBase<
   Msg extends ProgramMsg,
   Effect extends ProgramEffect,
 > = Readonly<{
+  toolDescriptions?: WebMCPDescriptions;
   flags: Flags;
   node: HTMLElement;
   program: Program<Flags, Model, Msg, Effect>;
@@ -779,7 +784,7 @@ export function start<Model, Msg extends ProgramMsg, Effect extends ProgramEffec
     try {
       const unsubscribe = subscription.subscribe(
         (message) => { dispatch(messageAction(), message); },
-        { call: (message, options) => call(dispatch, message, options, owned, inactive) },
+        { call: (message, options) => call(dispatch, message, options, owned, inactive), ...(runtime.toolDescriptions === undefined ? {} : {toolDescriptions: runtime.toolDescriptions}) },
       );
       return () => { withdraw(); unsubscribe(); };
     } catch (error) {
@@ -843,11 +848,12 @@ export function mountProgram<
 >(options: ProgramMount<Flags, Model, Msg, Effect>): ProgramHandle<Model, Msg> {
   const { flags, node, program } = options;
   let currentNode = node;
-  const context = { flags, get node() { return currentNode; }, settle: async () => { await Promise.resolve(); await handle.settle(); } } as ProgramContext<Flags>;
+  const context = { flags, ...(options.toolDescriptions === undefined ? {} : {toolDescriptions: options.toolDescriptions}), get node() { return currentNode; }, settle: async () => { await Promise.resolve(); await handle.settle(); } } as ProgramContext<Flags>;
   const subscriptions = program.subscriptions;
   const runEffect = options.runEffect;
   const runtime = {
     node,
+    ...(options.toolDescriptions === undefined ? {} : {toolDescriptions: options.toolDescriptions}),
     nodeChanged: (nextNode: Element) => {
       if (nextNode instanceof HTMLElement) currentNode = nextNode;
     },
@@ -905,9 +911,14 @@ export function mountIslands<
         throw new Error("Missing data-flags");
       }
       const flags = options.parseFlags(JSON.parse(rawFlags) as unknown);
+      let toolDescriptions: WebMCPDescriptions | undefined;
+      try {
+        if (node.dataset.toolDescriptions !== undefined) toolDescriptions = parseWebMCPDescriptionPackets(JSON.parse(node.dataset.toolDescriptions));
+      } catch { globalThis.console.error("Invalid WebMCP description packet"); }
       const runEffect = options.runEffect;
       const mount = {
         flags,
+        ...(toolDescriptions === undefined ? {} : {toolDescriptions}),
         node,
         program: options.program,
         ...(runEffect === undefined
