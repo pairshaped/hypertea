@@ -678,3 +678,19 @@ subscription chain; never forward through an effect's attributed dispatch.
 Use `anySignal(signals)` from `@pairshaped/hypertea/program` to combine effect
 lifetimes. It preserves the first cancellation reason and removes its listeners
 when cancelled, including on Safari 16 where `AbortSignal.any` is unavailable.
+
+Application shells can publish a common set of root tools through the same
+`createWebMCP` registry as page tools. Keep root declarations feature-owned and
+generate the combined schemas and stored description identities. Root and page
+names must be distinct when their inputs or draft semantics differ.
+
+A persisted read adapter receives a constrained GET transport and parsed data,
+without a Program, mount or DOM context. Recheck authorization on every request,
+reject redirects and non-JSON responses, bound response size, and report the
+applied scope, retrieval time, completeness, total and continuation cursor.
+Discovery metadata never grants access. Root reads follow the application's
+ordinary credit and spend policy. Navigation needs no approval for either reads
+or writes, subject to unsaved-change protection; business writes retain their
+standard approval and server authorization. Reuse page messages and projections
+when they fit, and allow agent-specific interactions where that gives a better
+answer.
