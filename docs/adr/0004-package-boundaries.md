@@ -21,7 +21,3 @@ Source code lives in `src/`. Tests may live next to source files when that impro
 
 Applications should depend on Hypertea through normal package tooling. They
 should not copy runtime source files or JSX declarations into the app.
-
-The canonical package remains private. It may be exported with filtered history
-to a public showcase repository without making that repository a second source
-of truth.
