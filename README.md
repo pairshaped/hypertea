@@ -2,7 +2,7 @@
 
 Hypertea is a tiny TypeScript TEA runtime for server-rendered apps, from a single interactive island to full single-page applications.
 
-The goal is to make the client-side parts of a server-rendered app feel close to Elm:
+The goal is to make the client side of a server-rendered app feel close to Elm:
 
 - a typed model
 - typed messages
