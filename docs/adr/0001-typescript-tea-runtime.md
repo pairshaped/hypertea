@@ -6,14 +6,14 @@ Accepted
 
 ## Decision
 
-Hypertea is a project-owned TypeScript runtime for small client islands using The Elm Architecture.
+Hypertea is a TypeScript runtime for server-rendered apps, from interactive islands to single-page applications using The Elm Architecture.
 
 The runtime centers on:
 
-- `Model`: immutable island state
+- `Model`: immutable program state
 - `Msg`: discriminated-union messages
 - `Effect`: page-local effect values returned by `update`
-- `Program`: the canonical typed island definition shared by production and tests
+- `Program`: the canonical typed program definition shared by production and tests
 - `defineProgram`: compile-time validation for the program definition
 - `mountProgram`: flags and host element binding for a canonical program
 - `start`: lower-level runtime bootstrapping, message dispatch, effect execution, and subscription patching
@@ -37,12 +37,12 @@ fragments. Child helpers can return those lists without adding wrapper elements.
 A Program or memoized view returns one root VNode. A fragment cannot be that root. Direct
 fragment-array returns are rejected by TypeScript; JSX shorthand requires the
 package's build-time fragment-root check because its TypeScript type is
-`JSX.Element`. Curling runs that check before bundling its islands. It follows
+`JSX.Element`. Applications run that check before bundling. It follows
 returned view expressions through helpers, stops at element roots, and reports
 a source location for a rejected fragment root. Wrap the root in an element.
 
 A single view root does not require a single Program for the page. Independently
-mounted Programs, including nested Results embeds, retain their own root and
+mounted Programs, including nested embeds, retain their own root and
 lifecycle. Parent-owned model composition with mapped child messages and effects
 is also supported. The host chooses composition at its existing boundary.
 

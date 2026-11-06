@@ -1,6 +1,6 @@
 # Hypertea
 
-Hypertea is a tiny TypeScript TEA runtime for SSR client islands.
+Hypertea is a tiny TypeScript TEA runtime for server-rendered apps, from a single interactive island to full single-page applications.
 
 The goal is to make the client-side parts of a server-rendered app feel close to Elm:
 
@@ -12,7 +12,7 @@ The goal is to make the client-side parts of a server-rendered app feel close to
 - strict linting around side effects
 - full test coverage
 
-This is not meant to become a broad SPA framework. It exists for small interactive islands that need more safety than loose JavaScript snippets, without paying the cost of a large client runtime.
+The same program model scales from a small island to a complete single-page application, while the client runtime stays small.
 
 ## Public boundary
 
@@ -70,12 +70,11 @@ Run this from the Hypertea package directory:
 node bin/check-fragment-roots.mjs path/to/tsconfig.json
 ```
 
-Curling's island build runs this check before writing bundles, including lazy
-feature sources. It follows view results through helpers and rejects fragment
+Run this check before bundling, including lazy feature sources. It follows view results through helpers and rejects fragment
 roots with a source location. Fragments beneath an element root remain valid.
 
 This rule concerns rendered nodes. It supports both independently mounted
-Programs, including nested Results embeds, and parent-owned models with mapped
+Programs, including nested embeds, and parent-owned models with mapped
 child messages and effects. Each independently mounted Program owns its own
 root and lifetime.
 
@@ -144,14 +143,14 @@ pnpm run bench
 
 `pnpm run check` is the command to run before handing work back.
 
-`pnpm --filter @pairshaped/hypertea test:webmcp`, from the repository root, runs
+`pnpm run test:webmcp`, from the Hypertea package directory, runs
 the optional native WebMCP smoke test through the globally installed
 `playwright-cli` and Chrome. It opens a headless browser, serves only the local
 example and compiled library, saves screenshots under the system temporary
 directory, and closes its server and browser. Finish other Playwright sessions
 first. The normal check stays browserless.
 
-`pnpm --filter @pairshaped/hypertea test:webmcp:fallback` runs the same example
+`pnpm run test:webmcp:fallback` runs the same example
 through its JavaScript bridge with native WebMCP disabled in the test browser.
 
 `pnpm run bench` builds Hypertea and compares its DOM patching against Hyperapp in jsdom. Treat the numbers as regression signals and optimization guidance, not browser parity proof.
@@ -679,18 +678,6 @@ Use `anySignal(signals)` from `@pairshaped/hypertea/program` to combine effect
 lifetimes. It preserves the first cancellation reason and removes its listeners
 when cancelled, including on Safari 16 where `AbortSignal.any` is unavailable.
 
-Application shells can publish a common set of root tools through the same
-`createWebMCP` registry as page tools. Keep root declarations feature-owned and
-generate the combined schemas and stored description identities. Root and page
-names must be distinct when their inputs or draft semantics differ.
-
-A persisted read adapter receives a constrained GET transport and parsed data,
-without a Program, mount or DOM context. Recheck authorization on every request,
-reject redirects and non-JSON responses, bound response size, and report the
-applied scope, retrieval time, completeness, total and continuation cursor.
-Discovery metadata never grants access. Root reads follow the application's
-ordinary credit and spend policy. Navigation needs no approval for either reads
-or writes, subject to unsaved-change protection; business writes retain their
-standard approval and server authorization. Reuse page messages and projections
-when they fit, and allow agent-specific interactions where that gives a better
-answer.
+Application shells can publish root tools alongside page tools through the same
+WebMCP registry. Names must remain unique across the document. Applications own
+read adapters, authorization, navigation policy and approval for writes.

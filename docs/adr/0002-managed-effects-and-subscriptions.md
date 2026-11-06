@@ -65,18 +65,6 @@ A reply retires the caller without stopping sibling effects, and an adapter can
 combine both signals when caller cancellation should also cancel its resources.
 Cancellation does not establish whether a server committed a write.
 
-The Curling adapter inventory includes 50 effect modules using `createEffectScope`,
-which cleans up on pagehide, disconnected roots and optional caller cancellation.
-A connected Program's stop needs its own signal: its root can remain connected
-after subscriptions stop. Public Notice deliberately combines the effect and
-caller signals at this scope boundary. Other adapters retain their behavior.
-Managed-host stylesheet loading separately owns its observer/pagehide cleanup;
-dynamic imports cannot be cancelled. Public website effects own fetches and a
-bounded stylesheet timer. Socket transport owns explicit stop and cancellation.
-Product Info owns a controller set for mount lifetime. Report Table cancels its
-earlier read locally before starting another. There is no demonstrated need for
-keyed replacement in Hypertea.
-
 A per-effect signal fits those browser APIs and releases completed work without
 requiring each adapter to unregister from a shared Program signal. Cleanup
 callbacks would change the runner return contract or require another registration
@@ -88,18 +76,7 @@ chosen contract adds one controller per pending runner and no scheduling runtime
 Ordinary effects have no declarative retry value or retry interpreter.
 [Live subscriptions](0009-live-subscriptions-and-sse.md) own observational stream
 reconnection with bounded delay and no attempt limit while subscribed. This does
-not grant permission to replay commands. The current adapter
-inventory does not establish two workflows needing the same safe retry policy.
-Applications keep their explicit recovery behavior.
-
-| Boundary | Operation and current behavior | Retry classification |
-| --- | --- | --- |
-| Curling `readJson` | One no-store GET with manual redirects; returns status or failure | A fresh observational read can be safe, but no shared retry requirement is established |
-| Curling `writeJson` | One POST; transport or parse uncertainty returns `unknown` | Unsafe to replay without a specific server idempotency guarantee |
-| `agentFetch` | Adds provenance headers and performs one fetch | Supplies no retry or idempotency guarantee |
-| Public website effects | Route/results reads, explicit recovery reads and POST commands; guards route/session context | Preserve the owning workflow's recovery; never infer mutation replay safety from request correlation |
-| Socket transport | Sends each frame once; disconnect or cancellation after send returns `unknown` | Request ids correlate replies, they do not prove server deduplication |
-| Webhook redelivery and installment retry actions | Explicit domain commands initiated by the user | Excluded from automatic transport retry; no replay guarantee established by this investigation |
+not grant permission to replay commands. Applications keep their explicit recovery behavior.
 
 HTTP method alone does not establish the server's contract. Authentication and
 redirect responses need the owning feature's navigation policy; validation and

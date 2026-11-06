@@ -36,7 +36,7 @@ function createCounter() {
     }),
   });
   const mcpTools = exposeMessages<Msg>([
-    { message: "add", description: "Add a finite number to the visible counter" },
+    { message: "add" },
   ], schemas);
   const program = defineProgram<undefined, Model, Msg, never>({
     init: () => [{ count: 0, error: "" }, []],
@@ -64,6 +64,12 @@ const node = document.createElement("div");
 document.body.append(node);
 const mounted = mountProgram({
   node, flags: undefined, program,
+  toolDescriptions: [{
+    scope: "counter", language: "en", binding: "counter-render",
+    tools: {
+      add: { key: "tool:counter/add", description: "Add a finite number to the visible counter" },
+    },
+  }],
 });
 // The host calls mounted.stop() when it removes this program.
 ```
@@ -79,19 +85,20 @@ and in CI. That check fails if the selected message names or shapes have changed
 a normal TypeScript check alone cannot detect a stale schema. The generator reads
 types without importing or executing your entry module, so the first generation
 works before the sidecar exists. TypeScript must also check your application in
-the normal build. In this monorepo, build Hypertea first and invoke
-`node packages/hypertea/bin/generate-webmcp.mjs` from the repository root with
-repository-relative paths. Installed consumers can use the package's
-`hypertea-webmcp` command.
+the normal build. Installed consumers can use the package's `hypertea-webmcp` command.
 
 The allowlist must be a literal array of objects in exactly one `exposeMessages<Msg>` call
-per source file. Each entry has a literal `message` name and a string
-`description`, with optional `title` and `annotations`. TypeScript checks names
+per source file. Each entry has a literal `message` name, with optional `title`
+and `annotations`. Descriptions come from the host's `toolDescriptions` packets,
+not declarations. TypeScript checks names
 against `Msg["type"]`; renames, removed messages and typos become compile errors.
 Duplicate messages fail generation and runtime declaration. Imported aliases for
 `exposeMessages` work. Metadata values can be expressions; entries cannot use
-spreads, shorthand fields, or computed property names. Descriptions and annotations stay
-explicit because the compiler cannot infer an action's purpose or consequences.
+spreads, shorthand fields, or computed property names. Annotations stay explicit because the compiler cannot infer consequences.
+Missing descriptions omit the affected tools and report their scope and name.
+Supply fresh packets when the host page changes; island hosts use
+`data-tool-descriptions`. Packet bindings and keys are application-owned identities,
+not authorization.
 
 Generation requires TypeScript 6 and both `strictNullChecks` (or `strict`) and
 `exactOptionalPropertyTypes`. Supported inputs are strings, finite numbers,
@@ -293,15 +300,15 @@ agents.
 
 ## Verification and compatibility
 
-`pnpm check:hypertea` runs the browserless suite with 100 percent coverage. The
+`pnpm run check` runs the browserless suite with 100 percent coverage. The
 WebMCP tests mount real programs and replace only the external browser API.
 They cover human/tool parity, validation, explicit completion, out-of-order
 results, duplicate/late replies, cancellation, registration replacement and
 failure, shared page catalogs, non-WebMCP browsers, and stop cleanup. Applications can also use
 the testing mount: inspect `takeEffect()`, dispatch the correlated application
-result, and run the resulting completion effect through `bridge.complete()`.
+result through that effect's dispatcher, and let `reply()` answer the waiting call.
 
-Run `pnpm --filter @pairshaped/hypertea test:webmcp` from the repository root for
+Run `pnpm run test:webmcp` from the Hypertea package directory for
 the native smoke test. It needs the globally installed `playwright-cli` and
 Chrome, and enables experimental web platform features in a headless test
 profile. It fails if the current browser lacks the required API. It checks tool
@@ -310,7 +317,7 @@ cleanup, and saves before/after screenshots in a printed temporary directory.
 It refuses to start over existing Playwright sessions and closes its browser
 and local server on completion or failure.
 
-Run `pnpm --filter @pairshaped/hypertea test:webmcp:fallback` for the same browser
+Run `pnpm run test:webmcp:fallback` for the same browser
 example through ordinary page JavaScript. The test launcher disables native
 WebMCP and asserts that `document.modelContext` is absent before discovering
 the JSON catalog and invoking the tools. These are test-profile controls, not

@@ -65,17 +65,6 @@ fixture hydrates absent slots around adjacent text, a memoized subtree and a key
 sibling, asserting zero removed elements and preserved focus. Existing keyed
 reorder tests continue to cover subsequent reconciliation.
 
-The Curling applications do not currently provide matching hydration markup:
-managed admin islands replace a server loading placeholder, and the public app
-renders a semantic server fallback rather than the client's styled view.
-Zero element replacement is therefore a contract for matching-markup fixtures,
-not a claim about these application mounts. Browser verification compares both
-removed and added element counts during the first patch on Tags and public
-`/landing` against the base runtime. Neither count may increase. The form-builder
-browser check separately proves that typing through a disappearing conditional
-alert retains the same focused input. This boundary requires no server rendering
-change.
-
 ## Performance Goal
 
 Hypertea does not need to beat Hyperapp. It should stay within the same practical class for small SSR islands:
@@ -88,7 +77,7 @@ Hypertea does not need to beat Hyperapp. It should stay within the same practica
 
 Benchmarks should be introduced before claiming parity. Until then, "fast like Hyperapp" means the patcher follows the same algorithmic shape and avoids obvious extra allocations on common paths.
 
-The current target is practical parity, not winning every row. A benchmark result is acceptable when most scenarios are near Hyperapp and no island update path is wildly slower. Current jsdom runs put Hypertea faster on simple text, static, form, append/remove, SSR recycle, click dispatch, and subscription restart paths, with keyed middle and mixed row reorders still close enough to track rather than block.
+Use the benchmark suite to track regressions. Its jsdom results do not establish browser performance or hydration parity.
 
 ## Benchmarking
 

@@ -99,5 +99,5 @@ Fetch, timers and TextDecoder have injectable implementations with real defaults
 Tests use fake transports, fetch responses, timers and direct microtask progression.
 They prove parser boundaries, cursor acceptance, connection transitions, disposal,
 independent mounts and fixed-slot Program integration without a real server or
-wall-clock waits. SSE is the only provided transport; existing socket APIs remain
+wall-clock waits. SSE is the only provided live transport; application transports remain
 separate.
