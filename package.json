@@ -1,7 +1,7 @@
 {
   "name": "@pairshaped/hypertea",
   "version": "0.0.0",
-  "description": "A tiny TypeScript TEA runtime for SSR client islands.",
+  "description": "A tiny TypeScript TEA runtime for server-rendered apps, from a single interactive island to full single-page applications.",
   "private": true,
   "type": "module",
   "main": "./dist/index.js",
@@ -48,7 +48,7 @@
     "bin/generate-webmcp.mjs"
   ],
   "scripts": {
-    "preinstall": "node -e 'const agent=process.env.npm_config_user_agent??\"\";if(!agent.startsWith(\"pnpm/\")){console.error(\"error: use pnpm for this repository\");process.exit(1)}'",
+    "prepare": "tsc -p tsconfig.build.json",
     "bench": "pnpm run build && node benchmark/dom-patching.mjs",
     "build": "tsc -p tsconfig.build.json",
     "check": "node --test src/abort.test-node.mjs && pnpm run typecheck && pnpm run lint && pnpm run test:coverage && pnpm run build && pnpm run check:webmcp-example && pnpm run test:fragment-roots",
